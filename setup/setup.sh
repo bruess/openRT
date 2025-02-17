@@ -29,21 +29,29 @@ create_directories() {
     for dir in "${dirs[@]}"; do
         if [ -d "$dir" ]; then
             echo "Directory $dir already exists, skipping..."
-        elif ! mkdir -p "$dir" 2>/dev/null; then
-            echo "Error: Failed to create directory $dir"
-            return 1
         else
+            if [ "$(id -u)" = "0" ]; then
+                if ! mkdir -p "$dir" 2>/dev/null; then
+                    echo "Error: Failed to create directory $dir"
+                    return 1
+                fi
+            else
+                if ! sudo mkdir -p "$dir" 2>/dev/null; then
+                    echo "Error: Failed to create directory $dir"
+                    return 1
+                fi
+            fi
             echo "Created directory $dir"
         fi
     done
     
     # Set permissions (only if we have access)
-    if [ -w "/usr/local/openRT" ]; then
+    if [ "$(id -u)" = "0" ]; then
         chmod -R 755 /usr/local/openRT
         chmod -R 700 /usr/local/openRT/status
     else
-        echo "Warning: Could not set permissions on directories"
-        return 1
+        sudo chmod -R 755 /usr/local/openRT
+        sudo chmod -R 700 /usr/local/openRT/status
     fi
     
     return 0
@@ -59,7 +67,7 @@ run_script() {
     if [ ! -w "/usr/local/openRT/status" ]; then
         echo "Error: Status directory is not writable"
         return 1
-    }
+    fi
     
     # Check if script has already been completed successfully
     if [ -f "$status_file" ] && [ "$(cat "$status_file")" = "completed" ]; then
