@@ -27,15 +27,24 @@ create_directories() {
     local dirs=("/usr/local/openRT" "/usr/local/openRT/config" "/usr/local/openRT/status" "/usr/local/openRT/logs")
     
     for dir in "${dirs[@]}"; do
-        if ! mkdir -p "$dir" 2>/dev/null; then
+        if [ -d "$dir" ]; then
+            echo "Directory $dir already exists, skipping..."
+        elif ! mkdir -p "$dir" 2>/dev/null; then
             echo "Error: Failed to create directory $dir"
             return 1
+        else
+            echo "Created directory $dir"
         fi
     done
     
-    # Set permissions
-    chmod -R 755 /usr/local/openRT
-    chmod -R 700 /usr/local/openRT/status
+    # Set permissions (only if we have access)
+    if [ -w "/usr/local/openRT" ]; then
+        chmod -R 755 /usr/local/openRT
+        chmod -R 700 /usr/local/openRT/status
+    else
+        echo "Warning: Could not set permissions on directories"
+        return 1
+    fi
     
     return 0
 }
@@ -88,6 +97,20 @@ run_script() {
 echo "OpenRT Installation Setup"
 echo "========================"
 
+# Parse command line arguments
+SKIP_CONFIRM=false
+while getopts "y" opt; do
+    case $opt in
+        y)
+            SKIP_CONFIRM=true
+            ;;
+        \?)
+            echo "Invalid option: -$OPTARG" >&2
+            exit 1
+            ;;
+    esac
+done
+
 # Check for root privileges
 if ! check_root; then
     echo "Error: Root privileges are required to install OpenRT."
@@ -102,21 +125,23 @@ if ! create_directories; then
     exit 1
 fi
 
-# Ask for confirmation
-echo
-echo "This script will install OpenRT and its components."
-echo "Configuration will be stored in /usr/local/openRT/"
-echo "The following scripts will be executed (if not already completed):"
-echo "- kioskSetup.sh"
-echo "- nasSetup.sh"
-echo "- uiSetup.sh"
-echo
-read -p "Are you sure you want to proceed with the installation? (y/N) " -n 1 -r
-echo
+# Ask for confirmation unless -y flag is used
+if [ "$SKIP_CONFIRM" = false ]; then
+    echo
+    echo "This script will install OpenRT and its components."
+    echo "Configuration will be stored in /usr/local/openRT/"
+    echo "The following scripts will be executed (if not already completed):"
+    echo "- kioskSetup.sh"
+    echo "- nasSetup.sh"
+    echo "- uiSetup.sh"
+    echo
+    read -p "Are you sure you want to proceed with the installation? (y/N) " -n 1 -r
+    echo
 
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Installation cancelled."
-    exit 1
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Installation cancelled."
+        exit 1
+    fi
 fi
 
 # Get the directory where this script is located
