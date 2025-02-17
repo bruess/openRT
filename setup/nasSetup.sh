@@ -3,47 +3,56 @@
 # Exit on any error
 set -e
 
+echo "Starting NAS Setup..."
+
 # Function to check if a package is installed
 is_installed() {
     dpkg -l "$1" &> /dev/null
     return $?
 }
 
+# Create necessary directories
+echo "Creating required directories..."
+mkdir -p /rtMount
+mkdir -p /var/run/vsftpd/empty
+chmod 755 /rtMount
+
 # Generate random 4-digit number for password
 RANDOM_NUM=$(printf "%04d" $((RANDOM % 10000)))
 PASSWORD="openRT-$RANDOM_NUM"
 
 # Store password in a secure file
+echo "Storing credentials..."
 echo "$PASSWORD" > /root/.nas_credentials
 chmod 600 /root/.nas_credentials
 
-# Create rtMount directory if it doesn't exist
-mkdir -p /rtMount
-chmod 755 /rtMount
-
 # Check if explorer user exists, if not create it
 if ! id "explorer" &>/dev/null; then
+    echo "Creating explorer user..."
     useradd -m -d /rtMount explorer
 fi
 
 # Update password
+echo "Setting user password..."
 echo "explorer:$PASSWORD" | chpasswd
 chown explorer:explorer /rtMount
 
 # Install required packages if not already installed
+echo "Installing required packages..."
 apt-get update
 for package in samba nfs-kernel-server vsftpd openssh-server zfsutils-linux; do
     if ! is_installed "$package"; then
-        apt-get install -y "$package"
+        echo "Installing $package..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "$package"
     fi
 done
 
-# Backup original Samba config if it hasn't been backed up
-if [ ! -f /etc/samba/smb.conf.original ]; then
-    cp /etc/samba/smb.conf /etc/samba/smb.conf.original
+# Backup and configure Samba
+echo "Configuring Samba..."
+if [ -f /etc/samba/smb.conf ]; then
+    cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
 fi
 
-# Configure Samba
 cat > /etc/samba/smb.conf << EOF
 [global]
 workgroup = WORKGROUP
@@ -60,30 +69,26 @@ create mask = 0644
 directory mask = 0755
 EOF
 
-# Restart Samba and set password for Samba user
-systemctl restart smbd
-systemctl restart nmbd
-(echo "$PASSWORD"; echo "$PASSWORD") | smbpasswd -s -a explorer
-
-# Backup original exports if it hasn't been backed up
-if [ ! -f /etc/exports.original ]; then
-    cp /etc/exports /etc/exports.original
-fi
-
-# Remove any existing rtMount entry from exports
-sed -i '/\/rtMount/d' /etc/exports
-
 # Configure NFS
-echo "/rtMount *(rw,sync,no_subtree_check)" >> /etc/exports
-exportfs -ra  # -ra forces re-read of exports and sync
-systemctl restart nfs-kernel-server
+echo "Configuring NFS..."
+# Create exports file if it doesn't exist
+touch /etc/exports
 
-# Backup original VSFTPD config if it hasn't been backed up
-if [ ! -f /etc/vsftpd.conf.original ]; then
-    cp /etc/vsftpd.conf /etc/vsftpd.conf.original
+# Backup original exports if it exists
+if [ -f /etc/exports ] && [ -s /etc/exports ]; then
+    cp /etc/exports /etc/exports.backup
 fi
 
-# Configure VSFTPD (FTP)
+# Remove any existing rtMount entry and add new one
+sed -i '/\/rtMount/d' /etc/exports
+echo "/rtMount *(rw,sync,no_subtree_check)" > /etc/exports
+
+# Configure VSFTPD
+echo "Configuring VSFTPD..."
+if [ -f /etc/vsftpd.conf ]; then
+    cp /etc/vsftpd.conf /etc/vsftpd.conf.backup
+fi
+
 cat > /etc/vsftpd.conf << EOF
 listen=YES
 listen_ipv6=NO
@@ -105,13 +110,24 @@ user_sub_token=\$USER
 local_root=/rtMount
 EOF
 
-systemctl restart vsftpd
+# Restart services
+echo "Restarting services..."
+systemctl restart smbd || echo "Warning: Failed to restart Samba"
+systemctl restart nmbd || echo "Warning: Failed to restart NMB"
+exportfs -ra || echo "Warning: Failed to refresh exports"
+systemctl restart nfs-kernel-server || echo "Warning: Failed to restart NFS"
+systemctl restart vsftpd || echo "Warning: Failed to restart VSFTPD"
 
-# Configure SFTP (already set up with SSH)
-# The user can already access their home directory (/rtMount) via SFTP
+# Enable services to start on boot
+echo "Enabling services..."
+systemctl enable smbd
+systemctl enable nmbd
+systemctl enable nfs-kernel-server
+systemctl enable vsftpd
+systemctl enable ssh
 
 # Print the generated password
-echo "Setup completed successfully!"
+echo -e "\nSetup completed successfully!"
 echo "Username: explorer"
 echo "Password: $PASSWORD"
 echo "Password has been stored in /root/.nas_credentials"
