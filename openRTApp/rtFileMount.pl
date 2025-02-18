@@ -128,51 +128,28 @@ sub cleanup_mounts {
     
     my @cleaned = ();  # Track all cleaned resources for reporting
     
-    # Step 1: Unmount any mounted backup volumes
+    # Step 1: First unmount all NTFS volumes
     # These are typically NTFS volumes mounted from .datto files
     my @mounts = `mount | grep $base_dir`;
     foreach my $mount (@mounts) {
-        if ($mount =~ /on\s+(\S+)\s+/) {
+        if ($mount =~ /on\s+(\S+)\s+type\s+fuseblk/) {
             my $mount_point = $1;
-            next if $mount_point =~ /\/zfs_block\//;  # Skip ZFS temp mounts for now
             
             # Filter by agent name if specified
             if ($agent_name) {
                 next unless $mount_point =~ m|$base_dir/$agent_name|;
             }
             
-            debug("Unmounting: $mount_point");
-            system("umount -f $mount_point 2>/dev/null");
+            debug("Unmounting NTFS volume: $mount_point");
+            system("umount -f -l $mount_point 2>/dev/null");
             push @cleaned, $mount_point;
         }
     }
     
-    # Step 2: Clean up ZFS clones
-    # These are temporary clones created to access .datto files
-    my @clones = `zfs list -H -o name | grep mount_`;
-    foreach my $clone (@clones) {
-        chomp($clone);
-        # Filter by agent name if specified
-        if ($agent_name && $agent_name ne '1') {
-            next unless $clone =~ m|/agents/$agent_name/|;
-        }
-        
-        debug("Destroying ZFS clone: $clone");
-        # First try gentle unmount
-        system("zfs unmount -f $clone 2>/dev/null");
-        sleep(1); # Brief pause to allow unmount to complete
-        system("zfs destroy -f $clone 2>/dev/null");
-        
-        # If clone persists, use more aggressive cleanup
-        if (`zfs list -H -o name $clone 2>/dev/null`) {
-            debug("Clone still exists, trying aggressive cleanup");
-            system("zfs unmount -f $clone 2>/dev/null");
-            system("zfs destroy -R -f $clone 2>/dev/null");
-        }
-        push @cleaned, $clone;
-    }
+    # Give system time to process unmounts
+    sleep(2);
     
-    # Step 3: Clean up loop devices
+    # Step 2: Clean up loop devices
     # These are used to mount the .datto files
     debug("Cleaning up loop devices");
     my @losetup = `losetup -a | grep .datto`;
@@ -185,18 +162,82 @@ sub cleanup_mounts {
         }
     }
     
-    # Step 4: Remove mount directories
-    # Only remove directories for specific agent if specified
+    # Step 3: Clean up ZFS clones and mounts
+    # These are temporary clones created to access .datto files
+    my @clones = `zfs list -H -o name | grep mount_`;
+    foreach my $clone (@clones) {
+        chomp($clone);
+        # Filter by agent name if specified
+        if ($agent_name && $agent_name ne '1') {
+            next unless $clone =~ m|/agents/$agent_name/|;
+        }
+        
+        debug("Processing ZFS clone: $clone");
+        
+        # Get mount point before unmounting
+        my $mountpoint = `zfs get -H -o value mountpoint $clone 2>/dev/null`;
+        chomp($mountpoint);
+        
+        # First try unmounting if mounted
+        my $is_mounted = `zfs get -H -o value mounted $clone 2>/dev/null` =~ /yes/;
+        if ($is_mounted) {
+            debug("Clone is mounted at $mountpoint, attempting unmount");
+            system("zfs unmount -f $clone 2>/dev/null");
+            sleep(1);
+        }
+        
+        # Try to destroy the clone
+        system("zfs destroy -f $clone 2>/dev/null");
+        
+        # If clone still exists, try more aggressive cleanup
+        if (`zfs list -H -o name $clone 2>/dev/null`) {
+            debug("Clone persists, trying aggressive cleanup");
+            # Force unmount any remaining processes
+            system("fuser -k $mountpoint 2>/dev/null") if $mountpoint;
+            sleep(1);
+            system("zfs unmount -f $clone 2>/dev/null");
+            system("zfs destroy -R -f $clone 2>/dev/null");
+            
+            # Final verification
+            if (`zfs list -H -o name $clone 2>/dev/null`) {
+                debug("Warning: Unable to fully clean up clone: $clone");
+            }
+        }
+        push @cleaned, $clone;
+    }
+    
+    # Step 4: Remove mount directories, but only after everything is unmounted
     if ($agent_name && $agent_name ne '1') {
         my $agent_dir = "$base_dir/$agent_name";
+        my $agent_temp_dir = "$base_dir/zfs_block/$agent_name";
+        
+        # Check if any mounts still exist before removing
+        my @remaining_mounts = `mount | grep -E "$agent_dir|$agent_temp_dir"`;
+        if (@remaining_mounts) {
+            debug("Warning: Found remaining mounts, attempting force unmount");
+            foreach my $mount (@remaining_mounts) {
+                if ($mount =~ /on\s+(\S+)\s+/) {
+                    my $mount_point = $1;
+                    system("umount -f -l $mount_point 2>/dev/null");
+                }
+            }
+            sleep(2);  # Give time for unmounts to complete
+        }
+        
+        # Now try to remove directories
         if (-d $agent_dir) {
             debug("Removing directory: $agent_dir");
-            remove_tree($agent_dir);
+            system("rm -rf $agent_dir 2>/dev/null");
+            if (-d $agent_dir) {
+                debug("Warning: Failed to remove $agent_dir");
+            }
         }
-        my $agent_temp_dir = "$base_dir/zfs_block/$agent_name";
         if (-d $agent_temp_dir) {
             debug("Removing temporary directory: $agent_temp_dir");
-            remove_tree($agent_temp_dir);
+            system("rm -rf $agent_temp_dir 2>/dev/null");
+            if (-d $agent_temp_dir) {
+                debug("Warning: Failed to remove $agent_temp_dir");
+            }
         }
     }
     
@@ -294,6 +335,36 @@ foreach my $agent_id (keys %{$metadata->{agents}}) {
         $agent_info = $agent;
         $agent_id_found = $agent_id;
         debug("Found matching agent with ID: $agent_id");
+        
+        # Debug the volumes data structure
+        debug("Raw volumes data: " . ($agent->{volumes} ? ref($agent->{volumes}) || "scalar" : "undefined"));
+        if ($agent->{volumes}) {
+            if (ref($agent->{volumes}) eq 'ARRAY') {
+                debug("Agent volumes found: " . scalar(@{$agent->{volumes}}));
+                foreach my $vol (@{$agent->{volumes}}) {
+                    debug("Volume info: GUID=" . ($vol->{guid} // "none") . 
+                          ", Mount=" . ($vol->{mountpoints} // "none") . 
+                          ", FS=" . ($vol->{filesystem} // "none"));
+                }
+            } elsif (ref($agent->{volumes}) eq 'HASH') {
+                # Handle case where volumes is a hash
+                debug("Volumes is a hash with keys: " . join(", ", keys %{$agent->{volumes}}));
+                my @vol_array;
+                foreach my $key (keys %{$agent->{volumes}}) {
+                    my $vol = $agent->{volumes}->{$key};
+                    push @vol_array, $vol if ref($vol) eq 'HASH';
+                }
+                $agent->{volumes} = \@vol_array;
+                debug("Converted " . scalar(@vol_array) . " volumes from hash to array");
+            } else {
+                # Handle unexpected data type
+                debug("WARNING: Volumes data is neither array nor hash. Type: " . ref($agent->{volumes}));
+                $agent->{volumes} = [];
+            }
+        } else {
+            debug("No volumes data found for agent");
+            $agent->{volumes} = [];
+        }
         last;
     }
 }
@@ -392,35 +463,65 @@ foreach my $target_snapshot (@target_snapshots) {
     $snapshot_info->{temp_mount} = $zfs_block_mount;
     $snapshot_info->{final_mount} = $final_mount_base;
     
-    # Create temporary ZFS clone for accessing backup data
+    # Create and mount ZFS clone once for all volumes in this snapshot
     my $clone_name = $snapshot_path . "/mount_" . $$ . "_" . $snap_epoch;
     $snapshot_info->{zfs_clone} = $clone_name;
     debug("Creating temporary clone for .datto access: $clone_name");
     
+    # Check if mount point is already in use
+    my $mount_exists = `mount | grep -F "$zfs_block_mount"`;
+    if ($mount_exists) {
+        debug("Mount point $zfs_block_mount is already in use, cleaning up first");
+        my @existing_mounts = `zfs list -H -o name,mountpoint | grep -F "$zfs_block_mount"`;
+        foreach my $existing (@existing_mounts) {
+            if ($existing =~ /^(\S+)\s+/) {
+                my $existing_clone = $1;
+                debug("Removing existing clone: $existing_clone");
+                system("zfs unmount -f $existing_clone 2>/dev/null");
+                system("zfs destroy -f $existing_clone 2>/dev/null");
+            }
+        }
+        sleep(1);
+    }
+    
     # Clean up any existing clone with the same name
     my $existing_clone = `zfs list -H -o name $clone_name 2>/dev/null`;
     if ($existing_clone) {
-        debug("Found existing clone, destroying it first");
-        system("zfs unmount $clone_name 2>/dev/null");
+        debug("Found existing clone with same name, destroying it first");
+        system("zfs unmount -f $clone_name 2>/dev/null");
         system("zfs destroy -f $clone_name 2>/dev/null");
+        sleep(1);
     }
     
-    # Create and mount the clone
-    system("zfs clone $target_snapshot $clone_name");
-    system("zfs set mountpoint=$zfs_block_mount $clone_name");
-    system("zfs mount $clone_name");
+    # Create and mount the clone once for this snapshot
+    my $clone_mounted = 0;
+    if ($json_output) {
+        system("zfs clone $target_snapshot $clone_name 2>/dev/null");
+        system("zfs set mountpoint=$zfs_block_mount $clone_name 2>/dev/null");
+        
+        my $is_mounted = `zfs get -H -o value mounted $clone_name 2>/dev/null` =~ /yes/;
+        if (!$is_mounted) {
+            system("zfs mount $clone_name 2>/dev/null");
+        }
+        $clone_mounted = `mount | grep $zfs_block_mount` ? 1 : 0;
+    } else {
+        # Even in non-JSON mode, suppress the "already mounted" warnings
+        system("zfs clone $target_snapshot $clone_name 2>/dev/null");
+        system("zfs set mountpoint=$zfs_block_mount $clone_name 2>/dev/null");
+        system("zfs mount $clone_name 2>/dev/null");
+        $clone_mounted = `mount | grep $zfs_block_mount` ? 1 : 0;
+    }
     
     # Verify clone was mounted successfully
-    my $mount_check = `mount | grep $zfs_block_mount`;
-    unless ($mount_check) {
+    unless ($clone_mounted) {
         warn "Warning: Failed to mount ZFS clone at $zfs_block_mount, skipping this snapshot\n";
         next;
     }
     debug("ZFS clone mounted successfully to temporary location");
     
-    # Now process each volume
+    # Now process each volume using the already mounted clone
     my $volumes = $agent_info->{volumes} || [];
-    $volumes = [] unless ref($volumes) eq 'ARRAY';  # Ensure volumes is an array
+    $volumes = [] unless ref($volumes) eq 'ARRAY';
     
     foreach my $vol (@{$volumes}) {
         # Initialize tracking structure for this volume
