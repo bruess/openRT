@@ -142,6 +142,7 @@ if [ "$SKIP_CONFIRM" = false ]; then
     echo "- kioskSetup.sh"
     echo "- nasSetup.sh"
     echo "- uiSetup.sh"
+    echo "- serviceSetup.sh"
     echo
     read -p "Are you sure you want to proceed with the installation? (y/N) " -n 1 -r
     echo
@@ -163,7 +164,7 @@ echo
 # Array to track failed scripts
 declare -a failed_scripts=()
 
-for script in "$SCRIPT_DIR"/{"kioskSetup.sh","nasSetup.sh","uiSetup.sh"}; do
+for script in "$SCRIPT_DIR"/{"kioskSetup.sh","nasSetup.sh","uiSetup.sh","serviceSetup.sh"}; do
     if [ -f "$script" ]; then
         if ! run_script "$script"; then
             failed_scripts+=("$(basename "$script")")

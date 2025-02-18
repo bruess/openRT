@@ -38,7 +38,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Install required packages if not already installed
-PACKAGES="chromium-browser apache2 php libapache2-mod-php ratpoison xserver-xorg xinit"
+PACKAGES="chromium-browser apache2 php libapache2-mod-php ratpoison xserver-xorg xinit libjson-perl"
 for pkg in $PACKAGES; do
     if ! package_installed "$pkg"; then
         echo "Installing $pkg..."
@@ -52,9 +52,37 @@ systemctl stop nginx 2>/dev/null || true
 DEBIAN_FRONTEND=noninteractive apt-get remove -y nginx || true
 
 # Create web directory and set permissions
-WEBPAGE_DIR="/var/www/html"
-rm -rf "$WEBPAGE_DIR"/*
+WEBPAGE_DIR="/usr/local/openRT/web"
+STATUS_DIR="/usr/local/openRT/status"
+APP_DIR="/usr/local/openRT/openRTApp"
+
+# Create directories if they don't exist
 mkdir -p "$WEBPAGE_DIR"
+mkdir -p "$STATUS_DIR"
+mkdir -p "$APP_DIR"
+
+# Create a group for openRT access if it doesn't exist
+groupadd -f openrt
+
+# Add www-data user to openrt group
+usermod -a -G openrt www-data
+
+# Set directory ownership and permissions
+# Web directory: owned by www-data, readable by openrt group
+chown -R www-data:openrt "$WEBPAGE_DIR"
+chmod -R 755 "$WEBPAGE_DIR"
+
+# Status directory: group readable by openrt
+chown -R root:openrt "$STATUS_DIR"
+chmod -R 775 "$STATUS_DIR"
+
+# App directory: executable by openrt group
+chown -R root:openrt "$APP_DIR"
+chmod -R 775 "$APP_DIR"
+
+# Ensure parent directory is accessible
+chown root:openrt "/usr/local/openRT"
+chmod 755 "/usr/local/openRT"
 
 # Create a PHP info file for testing PHP installation
 create_file_if_not_exists "$WEBPAGE_DIR/phpinfo.php" "<?php phpinfo(); ?>"
@@ -94,10 +122,6 @@ ini_set('display_errors', 1);
 </body>
 </html>"
 
-# Set proper permissions for web directory
-chown -R www-data:www-data "$WEBPAGE_DIR"
-chmod -R 755 "$WEBPAGE_DIR"
-
 # Enable Apache modules
 a2enmod php || true
 a2enmod rewrite || true
@@ -106,10 +130,10 @@ a2enmod rewrite || true
 cat > /etc/apache2/sites-available/000-default.conf <<EOF
 <VirtualHost *:80>
     ServerAdmin webmaster@localhost
-    DocumentRoot /var/www/html
+    DocumentRoot /usr/local/openRT/web
     ErrorLog \${APACHE_LOG_DIR}/error.log
     CustomLog \${APACHE_LOG_DIR}/access.log combined
-    <Directory /var/www/html>
+    <Directory /usr/local/openRT/web>
         Options Indexes FollowSymLinks
         AllowOverride All
         Require all granted
@@ -141,7 +165,7 @@ exec ratpoison &
 sleep 2
 
 # Start Chromium in kiosk mode
-exec chromium-browser --kiosk --incognito --disable-translate --no-first-run --fast --fast-start --disable-infobars --disable-features=TranslateUI --disable-session-crashed-bubble http://localhost"
+exec chromium-browser --kiosk --incognito --disable-translate --no-first-run --fast --fast-start --disable-infobars --disable-features=TranslateUI --disable-session-crashed-bubble http://localhost/index.php"
 
 # Make .xinitrc executable
 chmod +x "$REAL_HOME/.xinitrc"

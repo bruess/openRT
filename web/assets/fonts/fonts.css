@@ -1,0 +1,32 @@
+/* Regular */
+@font-face {
+    font-family: 'D-DIN';
+    src: url('D-DIN.woff2') format('woff2'),
+         url('D-DIN.woff') format('woff'),
+         url('D-DIN.ttf') format('truetype'),
+         url('D-DIN.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+/* Bold */
+@font-face {
+    font-family: 'D-DIN';
+    src: url('D-DIN-Bold.woff2') format('woff2'),
+         url('D-DIN-Bold.woff') format('woff'),
+         url('D-DIN-Bold.ttf') format('truetype'),
+         url('D-DIN-Bold.otf') format('opentype');
+    font-weight: bold;
+    font-style: normal;
+}
+
+/* Italic */
+@font-face {
+    font-family: 'D-DIN';
+    src: url('D-DIN-Italic.woff2') format('woff2'),
+         url('D-DIN-Italic.woff') format('woff'),
+         url('D-DIN-Italic.ttf') format('truetype'),
+         url('D-DIN-Italic.otf') format('opentype');
+    font-weight: normal;
+    font-style: italic;
+} 
