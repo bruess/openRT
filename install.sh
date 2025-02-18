@@ -76,7 +76,16 @@ fi
 if [ $ENABLE_AUTOMOUNT -eq 1 ]; then
     echo "Enabling automount..."
     mkdir -p "$INSTALL_DIR/status"
-    echo '{"automount": 1}' > "$INSTALL_DIR/status/automount_status.json"
+    echo 1 > "$INSTALL_DIR/status/automount"
 fi
 
+# Set full permissions on installation directory
+echo "Setting permissions..."
+chmod -R 777 "$INSTALL_DIR"
+
 echo "Installation completed successfully!"
+
+# Reboot the system
+echo "Rebooting system in 5 seconds..."
+sleep 5
+reboot

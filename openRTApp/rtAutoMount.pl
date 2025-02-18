@@ -153,6 +153,15 @@ update_status();
 
 my $metadata_script = "$script_dir/rtMetadata.pl";
 my $metadata_output = `perl "$metadata_script" -j`;
+
+# First attempt might trigger module installation
+if ($metadata_output =~ /Required modules not found/i) {
+    # Wait a moment for installation to complete
+    sleep(12);
+    # Try again after modules are installed
+    $metadata_output = `perl "$metadata_script" -j`;
+}
+
 my $metadata;
 eval {
     $metadata = decode_json($metadata_output);
@@ -168,7 +177,17 @@ update_status();
 $status->{current_step} = "Mounting agents";
 update_status();
 
+
+
+
+
 my $mount_script = "$script_dir/rtFileMount.pl";
+
+system("perl", $mount_script, "cleanup"); # Clean up any existing mounts before starting
+
+
+
+
 foreach my $agent_id (keys %{$metadata->{agents}}) {
     my $agent_info = $metadata->{agents}->{$agent_id};
     my $agent_name = $agent_info->{hostname} || $agent_info->{name} || $agent_id;
@@ -176,7 +195,8 @@ foreach my $agent_id (keys %{$metadata->{agents}}) {
     add_detail("Mounting agent: $agent_name");
     
     # Clean up any existing mounts for this agent
-    system("perl", $mount_script, "-cleanup=$agent_id");
+   
+   #system("perl", $mount_script, "-cleanup=$agent_id");
     
     # Mount all snapshots for the agent
     my $mount_output = `perl "$mount_script" -j "$agent_id" all 2>&1`;

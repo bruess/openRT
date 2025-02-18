@@ -5,6 +5,7 @@ $output = [];
 $return_var = 0;
 
 // Execute cleanup command with '1' to indicate cleanup all
+exec("sudo /usr/local/openRT/openRTApp/rtFileMount.pl cleanup -j 2>&1", $output, $return_var);
 exec("sudo /usr/local/openRT/openRTApp/rtFileMount.pl -cleanup=1 -j 2>&1", $output, $return_var);
 
 // Get the JSON output

@@ -340,9 +340,17 @@
                     const lastUpdated = document.getElementById('last-updated');
                     
                     // Show/hide buttons based on status
+                    const shouldShowButtons = data.status !== 'Not Available';
                     const hasImportedPool = data.status !== 'Available';
-                    showImportButton(!hasImportedPool);
-                    showActionButtons(hasImportedPool);
+                    
+                    // Hide all buttons if status is Not Available
+                    if (!shouldShowButtons) {
+                        showImportButton(false);
+                        showActionButtons(false);
+                    } else {
+                        showImportButton(!hasImportedPool);
+                        showActionButtons(hasImportedPool);
+                    }
                     
                     // Clear existing content
                     statusContent.innerHTML = '';

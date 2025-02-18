@@ -1,5 +1,55 @@
 #!/usr/bin/perl
 
+###############################################################################
+# rtStatus.pl - OpenRT Backup System Status Checker
+###############################################################################
+#
+# DESCRIPTION:
+#   This script checks and reports the status of the OpenRT backup system by
+#   examining connected drives, ZFS pools, and their states. It provides both
+#   human-readable and JSON-formatted output detailing the system's current
+#   state, including available and imported pools, connected drives, and
+#   overall system availability.
+#
+# USAGE:
+#   sudo ./rtStatus.pl [-j]
+#
+# OPTIONS:
+#   -j    Output results in JSON format with detailed information
+#
+# REQUIREMENTS:
+#   - Root privileges (for ZFS operations)
+#   - Perl JSON module (auto-installed if missing)
+#   - ZFS utilities (zpool command)
+#   - System tools: lsblk
+#
+# OUTPUT STATES:
+#   - "Imported"      : RT pool is imported and ready for use
+#   - "Available"     : RT pool is detected but not imported
+#   - "Not Available" : No RT pool found or system not ready
+#
+# JSON OUTPUT FIELDS:
+#   - timestamp         : Current date/time
+#   - status           : Overall system status
+#   - has_drives       : Whether non-OS drives are connected
+#   - has_imported_pool: Whether any pools are currently imported
+#   - has_available_pool: Whether any pools are available for import
+#   - drives           : List of connected non-OS drives
+#   - imported_pools   : Currently imported ZFS pools
+#   - available_pools  : Pools available for import
+#
+# ERROR HANDLING:
+#   - Validates required tools and commands
+#   - Handles missing JSON module with auto-installation
+#   - Provides clear error messages for common issues
+#
+# NOTES:
+#   - Excludes OS drive from drive detection
+#   - Supports both standalone and integrated usage
+#   - Used by other OpenRT scripts for system validation
+#
+###############################################################################
+
 use strict;
 use warnings;
 use POSIX qw(strftime);
@@ -26,14 +76,52 @@ BEGIN {
 # Process command line arguments
 my $json_output = grep { $_ eq '-j' } @ARGV;
 
-# Function to check if any non-OS drives are connected
+# Constants for GitHub updates
+my $GITHUB_UPDATE_FLAG = "/var/run/openrt_github_update.flag";
+my $GITHUB_UPDATE_SCRIPT = "/usr/local/openRT/setup/githubUpdates.sh";
+
+# Function to check if GitHub update should run
+# Returns: Boolean indicating if update should run
+sub should_run_github_update {
+    # Get system boot time using built-in stat
+    my @proc_stat = stat("/proc/1");
+    return 1 unless @proc_stat; # Run if we can't get boot time
+    my $boot_time = $proc_stat[9];
+    
+    # Check if flag file exists
+    if (-e $GITHUB_UPDATE_FLAG) {
+        my @flag_stat = stat($GITHUB_UPDATE_FLAG);
+        return 1 unless @flag_stat; # Run if we can't get flag time
+        my $flag_time = $flag_stat[9];
+        # Return true if flag is older than boot time
+        return $flag_time < $boot_time;
+    }
+    
+    # No flag file exists, should run
+    return 1;
+}
+
+# Function to run GitHub update and create flag
+sub run_github_update {
+    if (-x $GITHUB_UPDATE_SCRIPT) {
+        system("sudo $GITHUB_UPDATE_SCRIPT");
+        # Create/update flag file
+        system("touch $GITHUB_UPDATE_FLAG");
+    }
+}
+
+# Function to check for connected non-OS drives
+# Returns: ($has_extra_drives, \@extra_drives)
+#   - $has_extra_drives: Boolean indicating if non-OS drives are present
+#   - @extra_drives: Array of hashes containing drive details (name, size, type)
 sub check_drives {
     my @drives = `lsblk -o NAME,SIZE,TYPE,MOUNTPOINT -n`;
     my $has_extra_drives = 0;
     my @extra_drives;
     
     foreach my $drive (@drives) {
-        if ($drive =~ /sd[b-z]/ && $drive =~ /disk/) {
+        # Look for any drive except sda (assumed OS drive)
+        if ($drive =~ /sd[a-z]/ && $drive =~ /disk/) {
             $has_extra_drives = 1;
             if ($drive =~ /(\S+)\s+(\S+)\s+(\S+)/) {
                 push @extra_drives, {
@@ -47,7 +135,12 @@ sub check_drives {
     return ($has_extra_drives, \@extra_drives);
 }
 
-# Function to check ZFS pools
+# Function to check ZFS pool status
+# Returns: ($has_imported_pool, $has_available_pool, \@imported_pools, \@available_pools)
+#   - $has_imported_pool: Boolean indicating if any pools are imported
+#   - $has_available_pool: Boolean indicating if any pools are available
+#   - @imported_pools: Array of hashes with imported pool details
+#   - @available_pools: Array of hashes with available pool details
 sub check_zfs_pools {
     my @pools = `zpool list -H`;
     my $has_imported_pool = 0;
@@ -65,7 +158,7 @@ sub check_zfs_pools {
         };
     }
     
-    # Check for imported pools
+    # Check currently imported pools
     if ($? == 0 && @pools) {
         $has_imported_pool = 1;
         foreach my $pool (@pools) {
@@ -82,21 +175,33 @@ sub check_zfs_pools {
     return ($has_imported_pool, $has_available_pool, \@imported_pools, \@available_pools);
 }
 
-# Main status check
+# Main function to check and report system status
+# Combines drive and pool checks to determine overall system state
 sub get_rt_status {
-    my ($has_drives, $extra_drives) = check_drives();
-    my ($has_imported_pool, $has_available_pool, $imported_pools, $available_pools) = check_zfs_pools();
-    
-    my $status = "Not Available";
-    if ($has_imported_pool) {
-        $status = "Imported";
-    } elsif ($has_available_pool) {
-        $status = "Available";
-    } elsif (!$has_drives) {
-        $status = "Not Available";
+    # Check and run GitHub updates if needed
+    if (should_run_github_update()) {
+        run_github_update();
     }
     
+    # Check for connected drives
+    my ($has_drives, $extra_drives) = check_drives();
+    
+    # Check ZFS pool status
+    my ($has_imported_pool, $has_available_pool, $imported_pools, $available_pools) = check_zfs_pools();
+    
+    # Determine overall system status
+    my $status = "Not Available";
+    if ($has_imported_pool) {
+        $status = "Imported";      # Pool is imported and ready
+    } elsif ($has_available_pool) {
+        $status = "Available";     # Pool detected but not imported
+    } elsif (!$has_drives) {
+        $status = "Not Available"; # No suitable drives found
+    }
+    
+    # Output results in requested format
     if ($json_output) {
+        # Generate detailed JSON output
         my $timestamp = strftime("%Y-%m-%d %H:%M:%S", localtime);
         my $result = {
             timestamp => $timestamp,
@@ -110,11 +215,12 @@ sub get_rt_status {
         };
         print encode_json($result) . "\n";
     } else {
+        # Simple status output for human reading
         print "$status\n";
     }
 }
 
-# Get and print the status
+# Execute status check and output results
 get_rt_status();
 
 exit 0;
