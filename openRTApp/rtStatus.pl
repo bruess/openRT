@@ -2,6 +2,7 @@
 
 use strict;
 use warnings;
+use POSIX qw(strftime);
 
 # Auto-install JSON module if needed
 BEGIN {
@@ -96,7 +97,9 @@ sub get_rt_status {
     }
     
     if ($json_output) {
+        my $timestamp = strftime("%Y-%m-%d %H:%M:%S", localtime);
         my $result = {
+            timestamp => $timestamp,
             status => $status,
             has_drives => $has_drives ? JSON::true : JSON::false,
             has_imported_pool => $has_imported_pool ? JSON::true : JSON::false,
