@@ -57,6 +57,10 @@ The installation process:
 <img width="300" alt="Screenshot 2025-02-18 at 11 06 46 AM" src="https://github.com/user-attachments/assets/0a165195-6a6b-4605-b47a-dbb6f3a8fc95" />
 <img width="300" alt="Screenshot 2025-02-18 at 11 06 59 AM" src="https://github.com/user-attachments/assets/d779774f-4097-4c96-a01a-33af40aba3cb" />
 
+## Demo Video
+https://github.com/user-attachments/assets/83ed608c-4cb5-4de2-9e44-deba69126fbd
+
+
 
 
 ## Directory Structure
