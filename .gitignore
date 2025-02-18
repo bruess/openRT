@@ -1,0 +1,5 @@
+# Ignore release directory
+release/
+
+# macOS system files
+.DS_Store 
