@@ -106,14 +106,14 @@
                     <i class="fas fa-arrow-left"></i> Back
                 </a>
                 <button class="btn btn-light me-2" data-bs-toggle="modal" data-bs-target="#connectModal">
-                    <i class="fas fa-network-wired"></i> Connect
+                    <i class="fas fa-network-wired"></i> SMB/NFS/FTP
                 </button>
-                <span class="navbar-brand">OpenRT Explorer</span>
+                <span class="navbar-brand"></span>
             </div>
             <span class="navbar-text fw-bold" style="position: absolute; left: 50%; transform: translateX(-50%); color: white;">
                 http://<?php echo $server_ip; ?>
                 <br>
-                <small class="text-muted">Password: <?php echo trim(file_get_contents('/usr/local/openRT/status/explorer')); ?></small>
+                <small class="text-muted">explorer: <?php echo trim(file_get_contents('/usr/local/openRT/status/explorer')); ?></small>
             </span>
             <img src="assets/images/openRT.png" alt="OpenRT Logo" class="logo">
         </div>
@@ -136,7 +136,7 @@
                                         <h6 class="mb-0">SMB Connection</h6>
                                     </div>
                                     <div class="card-body">
-                                        <p><strong>Path:</strong><br><code>\\<?php echo $server_ip; ?>\explorer</code></p>
+                                        <p><strong>Path:</strong><br><code>\\<?php echo $server_ip; ?>\</code></p>
                                         <p><strong>Username:</strong><br><code>explorer</code></p>
                                         <p><strong>Password:</strong><br><code><?php echo trim(file_get_contents('/usr/local/openRT/status/explorer')); ?></code></p>
                                     </div>
@@ -148,8 +148,8 @@
                                         <h6 class="mb-0">NFS Connection</h6>
                                     </div>
                                     <div class="card-body">
-                                        <p><strong>Path:</strong><br><code><?php echo $server_ip; ?>:/explorer</code></p>
-                                        <p><strong>Mount Command:</strong><br><code>mount -t nfs <?php echo $server_ip; ?>:/explorer /mnt/explorer</code></p>
+                                        <p><strong>Path:</strong><br><code><?php echo $server_ip; ?>:/</code></p>
+                                        <p><strong>Mount Command:</strong><br><code>mount -t nfs <?php echo $server_ip; ?>:/ /mnt/openRT</code></p>
                                     </div>
                                 </div>
                             </div>

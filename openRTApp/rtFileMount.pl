@@ -8,7 +8,9 @@
 #   This script is responsible for mounting backup volumes from OpenRT backup
 #   snapshots. It can mount individual snapshots or all snapshots for a given
 #   agent, handling both Windows NTFS volumes stored in .datto files and
-#   managing ZFS clones for accessing the backup data.
+#   managing ZFS clones for accessing the backup data. For each .datto file,
+#   it also creates a VMDK descriptor file to enable easy importing into
+#   virtual machines.
 #
 # USAGE:
 #   sudo ./rtFileMount.pl [-cleanup[=agent_name]] [-j] agent_name [snapshot_epoch|all]
@@ -44,6 +46,7 @@
 #       └── [snapshot_date]/      - Snapshot-specific directory
 #           └── [volume_name]/    - Individual volume mount points
 #   /rtMount/zfs_block/           - Temporary ZFS clone mount points
+#                                  Contains .datto files and their .vmdk descriptors
 #
 # REQUIREMENTS:
 #   - Root privileges
@@ -59,6 +62,7 @@
 #      a. Create ZFS clone for accessing .datto files
 #      b. Mount clone to temporary location
 #      c. Process each volume in the snapshot:
+#         - Create VMDK descriptor file next to .datto file
 #         - Analyze partition layout using fdisk
 #         - Calculate correct partition offset
 #         - Mount volume using appropriate filesystem type
@@ -74,6 +78,8 @@
 #   - Snapshot dates are converted from Unix timestamps to YYYY-MM-DD_HH-MM-SS format
 #   - Windows volumes are mounted read-only using NTFS filesystem
 #   - Debug output can be controlled via $debug flag
+#   - VMDK descriptor files are created alongside .datto files for VM import
+#   - VMDK files use relative paths to reference their .datto files
 #
 ###############################################################################
 
@@ -432,6 +438,43 @@ if ($snapshot_epoch && $snapshot_epoch eq 'all') {
 # Validate that we found at least one snapshot to process
 die "No snapshots found for agent '$agent_name'\n" unless @target_snapshots;
 
+# Function to create a VMDK descriptor file for a raw disk image
+sub create_vmdk_descriptor {
+    my ($datto_file, $vmdk_path, $size_bytes) = @_;
+    
+    # Convert size to sectors (512 bytes per sector)
+    my $sectors = int($size_bytes / 512);
+    
+    # Create VMDK descriptor content
+    my $vmdk_content = qq{# Disk DescriptorFile
+version=1
+encoding="UTF-8"
+CID=fffffffe
+parentCID=ffffffff
+isNativeSnapshot="no"
+createType="monolithicFlat"
+
+# Extent description
+RW $sectors FLAT "$datto_file" 0
+
+# The Disk Data Base
+#DDB
+
+ddb.adapterType = "lsilogic"
+ddb.geometry.cylinders = "1024"
+ddb.geometry.heads = "255"
+ddb.geometry.sectors = "63"
+ddb.longContentID = "0123456789abcdef0123456789abcdef"
+ddb.virtualHWVersion = "4"};
+
+    # Write the descriptor file
+    open(my $fh, '>', $vmdk_path) or return 0;
+    print $fh $vmdk_content;
+    close($fh);
+    
+    return 1;
+}
+
 # Process each target snapshot
 foreach my $target_snapshot (@target_snapshots) {
     # Initialize tracking structure for this snapshot
@@ -531,7 +574,8 @@ foreach my $target_snapshot (@target_snapshots) {
             filesystem => $vol->{filesystem},
             status => "not_mounted",
             mount_path => "",
-            error => ""
+            error => "",
+            vmdk_path => ""
         };
         
         debug("\nProcessing volume: " . ($vol->{mountpoints} // "unknown"));
@@ -563,6 +607,17 @@ foreach my $target_snapshot (@target_snapshots) {
         my $datto_file = "$zfs_block_mount/$guid.datto";
         if (-f $datto_file) {
             debug("Found .datto file: $datto_file");
+            
+            # Create VMDK descriptor file next to the .datto file
+            my $vmdk_path = "$zfs_block_mount/$guid.vmdk";
+            my $datto_size = -s $datto_file;
+            if (create_vmdk_descriptor("$guid.datto", $vmdk_path, $datto_size)) {
+                debug("Created VMDK descriptor at: $vmdk_path");
+                $volume_info->{vmdk_path} = $vmdk_path;
+            } else {
+                warn "Warning: Failed to create VMDK descriptor for $datto_file\n" unless $json_output;
+                $volume_info->{error} .= " Failed to create VMDK descriptor.";
+            }
             
             # Analyze partition layout using fdisk
             debug("Analyzing partition layout with fdisk...");

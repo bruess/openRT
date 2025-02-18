@@ -199,10 +199,12 @@
 <body>
     <nav class="navbar">
         <div class="container-fluid">
-            <span class="navbar-brand">OpenRT Status</span>
+            <span class="navbar-brand">OpenRT</span>
             <span class="navbar-text fw-bold" style="position: absolute; left: 50%; transform: translateX(-50%); color: white;">
                 http://<?php echo trim(shell_exec('hostname -I | awk \'{print $1}\'')); ?>
-            </span>
+                     <br>
+            <small class="text-muted">explorer: <?php echo trim(file_get_contents('/usr/local/openRT/status/explorer')); ?></small>
+            </span>   
             <img src="assets/images/openRT.png" alt="OpenRT Logo" class="logo">
         </div>
     </nav>
