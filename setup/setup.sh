@@ -105,6 +105,21 @@ run_script() {
 echo "OpenRT Installation Setup"
 echo "========================"
 
+
+# Create openrt user if it doesn't exist
+if ! id "openrt" &>/dev/null; then
+    echo "Creating openrt user..."
+    useradd -m -s /bin/bash openrt
+    
+    # Add openrt to sudo group
+    usermod -aG sudo openrt
+    
+    # Configure sudo without password for openrt
+    echo "openrt ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/openrt
+    chmod 440 /etc/sudoers.d/openrt
+fi
+
+
 # Parse command line arguments
 SKIP_CONFIRM=false
 while getopts "y" opt; do

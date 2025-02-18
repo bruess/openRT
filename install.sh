@@ -6,6 +6,22 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Parse command line arguments
+ENABLE_AUTOMOUNT=1
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-automount)
+            ENABLE_AUTOMOUNT=0
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--no-automount]"
+            exit 1
+            ;;
+    esac
+done
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -54,6 +70,13 @@ if [ -f "$SETUP_SCRIPT" ]; then
 else
     echo "Setup script not found at $SETUP_SCRIPT"
     exit 1
+fi
+
+# Set automount status
+if [ $ENABLE_AUTOMOUNT -eq 1 ]; then
+    echo "Enabling automount..."
+    mkdir -p "$INSTALL_DIR/status"
+    echo '{"automount": 1}' > "$INSTALL_DIR/status/automount_status.json"
 fi
 
 echo "Installation completed successfully!"

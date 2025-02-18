@@ -14,10 +14,11 @@ my $debug = 1;  # Set to 0 to disable debug output
 # Command line options
 my $cleanup_mode = 0;
 my $json_output = 0;
+my $cleanup_agent = '';
 GetOptions(
-    'cleanup' => \$cleanup_mode,
+    'cleanup:s' => \$cleanup_agent,
     'j' => \$json_output
-) or die "Usage: $0 [-cleanup] [-j] agent_name [snapshot_epoch|all]\n";
+) or die "Usage: $0 [-cleanup[=agent_name]] [-j] agent_name [snapshot_epoch|all]\n";
 
 # Debug print function
 sub debug {
@@ -34,8 +35,8 @@ my $mount_info = {
 
 # Cleanup function
 sub cleanup_mounts {
-    my ($base_dir) = @_;
-    debug("Starting cleanup of $base_dir");
+    my ($base_dir, $agent_name, $is_cleanup_mode) = @_;
+    debug("Starting cleanup" . ($agent_name ? " for agent: $agent_name" : " for all agents"));
     
     my @cleaned = ();
     
@@ -44,7 +45,13 @@ sub cleanup_mounts {
     foreach my $mount (@mounts) {
         if ($mount =~ /on\s+(\S+)\s+/) {
             my $mount_point = $1;
-            next if $mount_point =~ /\/temp_zfs\//;  # Skip ZFS temp mounts for now
+            next if $mount_point =~ /\/zfs_block\//;  # Skip ZFS temp mounts for now
+            
+            # If agent name is specified, only clean mounts for that agent
+            if ($agent_name) {
+                next unless $mount_point =~ m|$base_dir/$agent_name|;
+            }
+            
             debug("Unmounting: $mount_point");
             system("umount -f $mount_point 2>/dev/null");
             push @cleaned, $mount_point;
@@ -55,28 +62,62 @@ sub cleanup_mounts {
     my @clones = `zfs list -H -o name | grep mount_`;
     foreach my $clone (@clones) {
         chomp($clone);
+        # If agent name is specified and not '1', only clean clones for that agent
+        if ($agent_name && $agent_name ne '1') {
+            next unless $clone =~ m|/agents/$agent_name/|;
+        }
+        
         debug("Destroying ZFS clone: $clone");
-        system("zfs unmount $clone 2>/dev/null");
+        # Force unmount in case it's busy
+        system("zfs unmount -f $clone 2>/dev/null");
+        sleep(1); # Give it a moment to unmount
         system("zfs destroy -f $clone 2>/dev/null");
+        
+        # If clone still exists, try more aggressive cleanup
+        if (`zfs list -H -o name $clone 2>/dev/null`) {
+            debug("Clone still exists, trying aggressive cleanup");
+            system("zfs unmount -f $clone 2>/dev/null");
+            system("zfs destroy -R -f $clone 2>/dev/null");
+        }
         push @cleaned, $clone;
     }
     
-    # Remove the mount directories
-    if (-d $base_dir) {
-        debug("Removing directory: $base_dir");
-        remove_tree($base_dir);
+    # Clean up any loop devices associated with .datto files
+    debug("Cleaning up loop devices");
+    my @losetup = `losetup -a | grep .datto`;
+    foreach my $loop (@losetup) {
+        if ($loop =~ /^(\/dev\/loop\d+):\s+.*\.datto/) {
+            my $loop_dev = $1;
+            debug("Detaching loop device: $loop_dev");
+            system("losetup -d $loop_dev 2>/dev/null");
+            push @cleaned, $loop_dev;
+        }
     }
     
-    if ($json_output) {
+    # Remove the mount directories
+    if ($agent_name && $agent_name ne '1') {
+        my $agent_dir = "$base_dir/$agent_name";
+        if (-d $agent_dir) {
+            debug("Removing directory: $agent_dir");
+            remove_tree($agent_dir);
+        }
+        my $agent_temp_dir = "$base_dir/zfs_block/$agent_name";
+        if (-d $agent_temp_dir) {
+            debug("Removing temporary directory: $agent_temp_dir");
+            remove_tree($agent_temp_dir);
+        }
+    }
+    
+    if ($json_output && $is_cleanup_mode) {
         print encode_json({
             status => "success",
-            message => "Cleanup completed",
+            message => $agent_name ? "Cleanup completed for agent: $agent_name" : "Cleanup completed for all agents",
             cleaned => \@cleaned
         }) . "\n";
         exit 0;
     }
     
-    print "Cleanup completed.\n" unless $json_output;
+    print ($agent_name ? "Cleanup completed for agent: $agent_name\n" : "Cleanup completed for all agents.\n") unless $json_output;
 }
 
 # Get script directory
@@ -87,11 +128,11 @@ die "This script must be run as root\n" unless $> == 0;
 
 # Base mount directory
 my $mount_base = "/rtMount";
-my $temp_zfs_base = "$mount_base/temp_zfs";  # New temporary location for ZFS mounts
+my $zfs_block_base = "$mount_base/zfs_block";  # New temporary location for ZFS mounts
 
 # If in cleanup mode, just clean up and exit
-if ($cleanup_mode) {
-    cleanup_mounts($mount_base);
+if ($cleanup_agent ne '') {
+    cleanup_mounts($mount_base, $cleanup_agent eq '1' ? '' : $cleanup_agent, 1);
     exit 0;
 }
 
@@ -99,7 +140,17 @@ if ($cleanup_mode) {
 my $agent_name = shift @ARGV;
 my $snapshot_epoch = shift @ARGV;
 
-die "Usage: $0 [-cleanup] [-j] agent_name [snapshot_epoch|all]\n" unless $agent_name;
+die "Usage: $0 [-cleanup[=agent_name]] [-j] agent_name [snapshot_epoch|all]\n" unless $agent_name;
+
+# Before mounting, clean up any existing mounts for this agent
+cleanup_mounts($mount_base, $agent_name, 0);
+
+# Create required directories
+make_path($mount_base) unless -d $mount_base;
+make_path($zfs_block_base) unless -d $zfs_block_base;
+
+# Initialize arrays for target snapshots
+my @target_snapshots = ();
 
 # Convert epoch to human readable date if provided
 my $snapshot_date = ($snapshot_epoch && $snapshot_epoch ne 'all') ? 
@@ -108,10 +159,6 @@ my $snapshot_date = ($snapshot_epoch && $snapshot_epoch ne 'all') ?
 
 debug("Agent name: $agent_name");
 debug("Snapshot epoch: " . ($snapshot_epoch // "none") . " ($snapshot_date)");
-
-# Create base mount directory if it doesn't exist
-debug("Creating base mount directory: $mount_base");
-make_path($mount_base) unless -d $mount_base;
 
 # Get metadata using rtMetadata.pl
 debug("Running rtMetadata.pl...");
@@ -133,11 +180,13 @@ if ($@) {
 
 # Find the agent in metadata
 my $agent_info;
+my $agent_id_found;
 foreach my $agent_id (keys %{$metadata->{agents}}) {
     my $agent = $metadata->{agents}->{$agent_id};
-    debug("Checking agent: " . ($agent->{hostname} // "unknown") . " / " . ($agent->{name} // "unknown"));
-    if ($agent->{hostname} eq $agent_name || $agent->{name} eq $agent_name) {
+    debug("Checking agent: " . ($agent->{hostname} // "unknown") . " / " . ($agent->{name} // "unknown") . " / " . ($agent->{agentId} // "unknown"));
+    if ($agent->{hostname} eq $agent_name || $agent->{name} eq $agent_name || $agent->{agentId} eq $agent_name) {
         $agent_info = $agent;
+        $agent_id_found = $agent_id;
         debug("Found matching agent with ID: $agent_id");
         last;
     }
@@ -153,6 +202,13 @@ debug("Using RT pool: $rt_pool");
 # First mount the ZFS dataset to get access to .datto files
 my $agents_dataset = "$rt_pool/home/agents";
 my $snapshot_path = "$agents_dataset/$agent_name";
+
+# If we found the agent by ID, use that for the snapshot path
+if ($agent_id_found && $agent_id_found ne $agent_name) {
+    $snapshot_path = "$agents_dataset/$agent_id_found";
+    debug("Using agent ID for snapshot path: $snapshot_path");
+}
+
 debug("Checking ZFS dataset: $snapshot_path");
 
 # Get list of snapshots for this agent
@@ -160,7 +216,6 @@ debug("Getting snapshot list...");
 my @snapshots = `zfs list -H -t snapshot -o name $snapshot_path 2>/dev/null`;
 chomp(@snapshots);
 
-my @target_snapshots;
 if ($snapshot_epoch && $snapshot_epoch eq 'all') {
     # Use all snapshots
     debug("Using all snapshots");
@@ -216,12 +271,12 @@ foreach my $target_snapshot (@target_snapshots) {
     debug("\nProcessing snapshot: $target_snapshot ($snapshot_date)");
     
     # Mount the snapshot to access .datto files
-    my $temp_zfs_mount = "$temp_zfs_base/$agent_name/$snapshot_date";
+    my $zfs_block_mount = "$zfs_block_base/$agent_name/$snapshot_date";
     my $final_mount_base = "$mount_base/$agent_name/$snapshot_date";
-    make_path($temp_zfs_mount);
+    make_path($zfs_block_mount);
     make_path($final_mount_base);
     
-    $snapshot_info->{temp_mount} = $temp_zfs_mount;
+    $snapshot_info->{temp_mount} = $zfs_block_mount;
     $snapshot_info->{final_mount} = $final_mount_base;
     
     my $clone_name = $snapshot_path . "/mount_" . $$ . "_" . $snap_epoch;
@@ -238,19 +293,22 @@ foreach my $target_snapshot (@target_snapshots) {
     
     # Create and mount the clone to temporary location
     system("zfs clone $target_snapshot $clone_name");
-    system("zfs set mountpoint=$temp_zfs_mount $clone_name");
+    system("zfs set mountpoint=$zfs_block_mount $clone_name");
     system("zfs mount $clone_name");
     
     # Verify the mount
-    my $mount_check = `mount | grep $temp_zfs_mount`;
+    my $mount_check = `mount | grep $zfs_block_mount`;
     unless ($mount_check) {
-        warn "Warning: Failed to mount ZFS clone at $temp_zfs_mount, skipping this snapshot\n";
+        warn "Warning: Failed to mount ZFS clone at $zfs_block_mount, skipping this snapshot\n";
         next;
     }
     debug("ZFS clone mounted successfully to temporary location");
     
     # Now process each volume
-    foreach my $vol (@{$agent_info->{volumes}}) {
+    my $volumes = $agent_info->{volumes} || [];
+    $volumes = [] unless ref($volumes) eq 'ARRAY';  # Ensure it's an array reference
+    
+    foreach my $vol (@{$volumes}) {
         my $volume_info = {
             guid => $vol->{guid},
             mountpoint => $vol->{mountpoints},
@@ -267,6 +325,14 @@ foreach my $target_snapshot (@target_snapshots) {
         my $mountpoint = $vol->{mountpoints};
         my $filesystem = $vol->{filesystem};
         
+        # Skip if missing required information
+        unless ($guid && $mountpoint) {
+            debug("Skipping volume due to missing required information");
+            $volume_info->{error} = "Missing required volume information";
+            push @{$snapshot_info->{volumes}}, $volume_info;
+            next;
+        }
+        
         debug("Volume GUID: $guid");
         debug("Mountpoint: $mountpoint");
         debug("Filesystem: $filesystem");
@@ -277,7 +343,7 @@ foreach my $target_snapshot (@target_snapshots) {
         make_path($mount_path);
         
         # Find corresponding .datto file in temporary ZFS mount
-        my $datto_file = "$temp_zfs_mount/$guid.datto";
+        my $datto_file = "$zfs_block_mount/$guid.datto";
         if (-f $datto_file) {
             debug("Found .datto file: $datto_file");
             
@@ -338,7 +404,7 @@ foreach my $target_snapshot (@target_snapshots) {
     unless ($json_output) {
         print "\nSnapshot mount operations completed for $snapshot_date\n";
         print "Files are mounted at: $final_mount_base/\n";
-        print "ZFS clone is mounted at: $temp_zfs_mount\n";
+        print "ZFS clone is mounted at: $zfs_block_mount\n";
     }
 }
 

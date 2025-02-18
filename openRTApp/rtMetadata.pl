@@ -136,12 +136,18 @@ print "Unmounting all agent datasets...\n" unless $json_only;
 my @agent_datasets = `zfs list -H -o name -r $agents_dataset`;
 chomp(@agent_datasets);
 foreach my $dataset (reverse @agent_datasets) {  # Unmount in reverse order
+    # Skip mount clones
+    next if $dataset =~ /mount_/;
+    print "Unmounting dataset: $dataset\n" unless $json_only;
     system("zfs unmount $dataset 2>/dev/null");
 }
 
 # Set mountpoints and mount datasets
 print "Setting mountpoints and mounting datasets...\n" unless $json_only;
 foreach my $dataset (@agent_datasets) {
+    # Skip mount clones
+    next if $dataset =~ /mount_/;
+    
     my $relative_path = $dataset;
     $relative_path =~ s/^$agents_dataset\/?//;  # Remove parent dataset prefix
     my $mount_path = $relative_path ? "$temp_mount/$relative_path" : $temp_mount;
@@ -159,8 +165,28 @@ foreach my $dataset (@agent_datasets) {
     }
 }
 
+# Function to count snapshots for an agent
+sub count_agent_snapshots {
+    my ($agent_id) = @_;
+    
+    # Get snapshots for this agent's dataset
+    my $dataset = "$agents_dataset/$agent_id";
+    my @snapshots = `zfs list -H -t snapshot -o name -r $dataset 2>/dev/null`;
+    chomp(@snapshots);
+    
+    # Filter out mount clones (snapshots containing "mount_")
+    @snapshots = grep { !/mount_/ } @snapshots;
+    
+    # Print debug info
+    print "DEBUG: Counting snapshots for $agent_id in $dataset\n" unless $json_only;
+    print "DEBUG: Found " . scalar(@snapshots) . " snapshots\n" unless $json_only;
+    
+    return scalar(@snapshots);
+}
+
 # Initialize metadata storage
 my %agent_metadata;
+my $config_agent_id;
 
 # Function to process agentInfo files
 sub process_agent_info {
@@ -200,14 +226,36 @@ sub process_agent_info {
     $agent_info->{agentId} = $agent_id;
     $agent_info->{agentInfoFile} = basename($full_path);
     
+    # Count snapshots for this agent
+    my $snapshot_count = count_agent_snapshots($agent_info->{name} || $agent_id);
+    $agent_info->{snapshot_count} = $snapshot_count;
+    
     # Store metadata
     $agent_metadata{$agent_id} = $agent_info;
-    print "Added metadata for agent: $agent_id\n" unless $json_only;
+    print "Added metadata for agent: $agent_id (snapshots: $snapshot_count)\n" unless $json_only;
 }
 
 # Find and process all agentInfo files
 print "Searching for agent info files in $temp_mount...\n" unless $json_only;
 find(\&process_agent_info, $temp_mount);
+
+# Process and combine agent data
+my %final_metadata;
+foreach my $agent_id (keys %agent_metadata) {
+    my $agent_data = $agent_metadata{$agent_id};
+    
+    # Skip the config entry itself
+    next if $agent_id eq 'config';
+    
+    # If this agent has a config entry and it's newer, use that instead
+    if ($agent_metadata{config} && 
+        $agent_metadata{config}->{name} eq $agent_id &&
+        $agent_metadata{config}->{generated} >= ($agent_data->{generated} || 0)) {
+        $final_metadata{$agent_id} = $agent_metadata{config};
+    } else {
+        $final_metadata{$agent_id} = $agent_data;
+    }
+}
 
 # Output the complete metadata as JSON
 my $output = {
@@ -215,12 +263,12 @@ my $output = {
     timestamp => time(),
     pool_name => $rt_pool,
     agents_path => $temp_mount,
-    agent_count => scalar(keys %agent_metadata),
-    agents => \%agent_metadata
+    agent_count => scalar(keys %final_metadata),
+    agents => \%final_metadata
 };
 
 unless ($json_only) {
-    print "\nMetadata collection complete. Found " . scalar(keys %agent_metadata) . " agents.\n";
+    print "\nMetadata collection complete. Found " . scalar(keys %final_metadata) . " unique agents.\n";
 }
 
 # Create JSON encoder with pretty printing for -j option

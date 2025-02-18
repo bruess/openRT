@@ -80,6 +80,16 @@ chmod -R 775 "$STATUS_DIR"
 chown -R root:openrt "$APP_DIR"
 chmod -R 775 "$APP_DIR"
 
+# Create a specific sudoers entry for www-data
+echo "# Allow www-data to execute specific commands without password
+www-data ALL=(ALL) NOPASSWD: /usr/local/openRT/openRTApp/rtStatus.pl
+www-data ALL=(ALL) NOPASSWD: /usr/local/openRT/openRTApp/rtMetadata.pl
+www-data ALL=(ALL) NOPASSWD: /usr/local/openRT/openRTApp/rtFileMount.pl
+www-data ALL=(ALL) NOPASSWD: /usr/local/openRT/openRTApp/rtImport.pl" > /etc/sudoers.d/www-data-openrt
+
+# Set proper permissions for the sudoers file
+chmod 440 /etc/sudoers.d/www-data-openrt
+
 # Ensure parent directory is accessible
 chown root:openrt "/usr/local/openRT"
 chmod 755 "/usr/local/openRT"

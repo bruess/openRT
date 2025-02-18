@@ -9,21 +9,22 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Function to safely stop and remove existing service
-cleanup_existing_service() {
-    # Stop the service if it's running
+# Function to safely stop and remove existing services
+cleanup_existing_services() {
+    # Stop and disable the old service if it exists
     systemctl stop rtstatus.service 2>/dev/null || true
-    
-    # Disable the service if it's enabled
     systemctl disable rtstatus.service 2>/dev/null || true
-    
-    # Remove the service file if it exists
     rm -f /etc/systemd/system/rtstatus.service
+    
+    # Stop and disable the status monitor service if it exists
+    systemctl stop openrt-status-monitor.service 2>/dev/null || true
+    systemctl disable openrt-status-monitor.service 2>/dev/null || true
+    rm -f /etc/systemd/system/openrt-status-monitor.service
     
     # Reload systemd to recognize changes
     systemctl daemon-reload
     
-    echo "Cleaned up existing service installation"
+    echo "Cleaned up existing service installations"
 }
 
 # Function to ensure directory exists and has correct permissions
@@ -37,62 +38,104 @@ ensure_directory() {
     chmod 755 "$dir"
 }
 
-echo "Starting RT Status Monitor Service setup..."
+echo "Starting OpenRT Service setup..."
 
 # Clean up any existing installation
-cleanup_existing_service
+cleanup_existing_services
 
 # Create necessary directories with proper permissions
 ensure_directory "/usr/local/openRT/service" "openrt" "openrt"
 ensure_directory "/usr/local/openRT/status" "openrt" "openrt"
 
+# Install jq if not already installed
+if ! command -v jq &> /dev/null; then
+    apt-get update
+    apt-get install -y jq
+fi
+
 # Create the status monitor script
 cat > /usr/local/openRT/service/status_monitor.sh << 'EOF'
 #!/bin/bash
 
-# Set the working directory
-cd /usr/local/openRT
+# Constants
+STATUS_DIR="/usr/local/openRT/status"
+SCRIPT_DIR="/usr/local/openRT/openRTApp"
+LAST_STATUS_FILE="$STATUS_DIR/last_status"
+AUTOMOUNT_FLAG="$STATUS_DIR/automount"
+STATUS_JSON="$STATUS_DIR/rtStatus.json"
 
-# Ensure the status directory exists
-mkdir -p status
+# Create status directory if it doesn't exist
+mkdir -p "$STATUS_DIR"
 
 # Function to cleanup on exit
 cleanup() {
-    rm -f "status/rtStatus.json.tmp"
+    rm -f "$STATUS_JSON.tmp"
     exit 0
 }
 
 # Set up trap for cleanup
 trap cleanup EXIT INT TERM
 
+# Function to check if automount is enabled
+check_automount_enabled() {
+    [[ -f "$AUTOMOUNT_FLAG" ]] && [[ "$(cat "$AUTOMOUNT_FLAG")" == "1" ]]
+}
+
+# Function to get current pool status
+get_pool_status() {
+    perl "$SCRIPT_DIR/rtStatus.pl" -j | jq -r '.status'
+}
+
+# Function to handle status changes
+handle_status_change() {
+    local new_status="$1"
+    local last_status="$2"
+    
+    echo "$new_status" > "$LAST_STATUS_FILE"
+    
+    # If automount is enabled and pool becomes Available
+    if check_automount_enabled && [[ "$new_status" == "Available" ]]; then
+        # Launch automount in the background
+        perl "$SCRIPT_DIR/rtAutoMount.pl" &
+    fi
+}
+
+# Main loop
 while true; do
-    # Run rtStatus.pl with JSON output and save to temporary file first
-    # This ensures we don't have partial writes
-    if ./openRTApp/rtStatus.pl -j -l > "status/rtStatus.json.tmp"; then
-        # Only move the file if the command was successful
-        mv "status/rtStatus.json.tmp" "status/rtStatus.json"
+    # Update status JSON file
+    if perl "$SCRIPT_DIR/rtStatus.pl" -j -l > "$STATUS_JSON.tmp"; then
+        mv "$STATUS_JSON.tmp" "$STATUS_JSON"
     fi
     
-    # Wait 5 seconds before next run
+    # Get current status
+    current_status=$(get_pool_status)
+    
+    # Get last status
+    last_status=""
+    [[ -f "$LAST_STATUS_FILE" ]] && last_status=$(cat "$LAST_STATUS_FILE")
+    
+
+    handle_status_change "$current_status" "$last_status"
+    
+    # Sleep for 5 seconds
     sleep 5
 done
 EOF
 
 # Create the systemd service file
-cat > /usr/local/openRT/service/rtstatus.service << 'EOF'
+cat > /etc/systemd/system/openrt-status-monitor.service << 'EOF'
 [Unit]
-Description=RT Status Monitor Service
+Description=OpenRT Status Monitor
 After=network.target
 
 [Service]
 Type=simple
+User=root
+Group=root
 ExecStart=/usr/local/openRT/service/status_monitor.sh
 WorkingDirectory=/usr/local/openRT
-User=openrt
-Group=openrt
 Restart=always
 RestartSec=5
-# Ensure clean shutdown
 KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=5
@@ -103,25 +146,21 @@ EOF
 
 # Set proper permissions for the monitor script
 chmod 755 /usr/local/openRT/service/status_monitor.sh
-chown openrt:openrt /usr/local/openRT/service/status_monitor.sh
+chown root:root /usr/local/openRT/service/status_monitor.sh
 
-# Install the service
-cp /usr/local/openRT/service/rtstatus.service /etc/systemd/system/
-
-# Reload systemd to recognize new service
+# Reload systemd daemon
 systemctl daemon-reload
 
-# Enable and start the service
-systemctl enable rtstatus.service
-systemctl start rtstatus.service
+# Enable and start the status monitor service
+systemctl enable openrt-status-monitor
+systemctl start openrt-status-monitor
 
 # Verify service is running
-if systemctl is-active --quiet rtstatus.service; then
-    echo "RT Status Monitor Service has been successfully installed and started."
-    echo "You can check its status with: systemctl status rtstatus.service"
-    echo "Status output will be available at: /usr/local/openRT/status/rtStatus.json"
+if systemctl is-active --quiet openrt-status-monitor.service; then
+    echo "OpenRT Status Monitor Service has been successfully installed and started."
+    echo "You can check its status with: systemctl status openrt-status-monitor.service"
 else
     echo "Error: Service installation completed but service failed to start."
-    echo "Please check the logs with: journalctl -u rtstatus.service"
+    echo "Please check the logs with: journalctl -u openrt-status-monitor.service"
     exit 1
 fi

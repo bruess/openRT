@@ -75,27 +75,56 @@ sub output_error {
 
 # Function to get OS drive
 sub get_os_drive {
-    my $os_drive = `mount | grep ' / ' | cut -d' ' -f1`;
-    $os_drive =~ s/\d+$//; # Remove partition number
-    chomp($os_drive);
+    my $os_drive = "";
+    eval {
+        $os_drive = `mount | grep ' / ' | cut -d' ' -f1`;
+        $os_drive =~ s/\d+$//; # Remove partition number
+        chomp($os_drive);
+    };
+    if ($@) {
+        output_error("Failed to get OS drive: $@");
+    }
     return $os_drive;
 }
 
 # Function to get detailed pool status
 sub get_pool_status {
     my ($device, $pool_name) = @_;
-    my $status = `zpool import -d $device $pool_name 2>&1`;
+    my $status = "";
+    eval {
+        $status = `zpool import -d $device $pool_name 2>&1`;
+    };
+    if ($@) {
+        output_error("Failed to get pool status: $@");
+    }
     return $status;
 }
 
 # Function to find importable ZFS pools
 sub find_importable_pools {
     my @pools;
+    
+    # Get OS drive first
     my $os_drive = get_os_drive();
     
     # Get list of block devices and partitions in JSON format
-    my $lsblk_json = `lsblk -J -o NAME,TYPE,PKNAME,SIZE,MOUNTPOINT`;
-    my $devices = decode_json($lsblk_json);
+    my $lsblk_json = "";
+    eval {
+        $lsblk_json = `lsblk -J -o NAME,TYPE,PKNAME,SIZE,MOUNTPOINT`;
+    };
+    if ($@) {
+        output_error("Failed to get block device list: $@");
+        return @pools;
+    }
+    
+    my $devices;
+    eval {
+        $devices = decode_json($lsblk_json);
+    };
+    if ($@) {
+        output_error("Failed to parse lsblk output: $@");
+        return @pools;
+    }
     
     sub check_device {
         my ($device, $parent_name) = @_;
@@ -112,9 +141,16 @@ sub find_importable_pools {
         my $dev_path = "/dev/$dev_name";
         
         # Check if device has importable ZFS pools
-        print "Checking $dev_type $dev_path (Size: $device->{size})\n";
-        my $zpool_output = `zpool import -d $dev_path 2>/dev/null`;
-        if ($? == 0 && $zpool_output =~ /pool:\s+(\S+)/m) {
+        print "Checking $dev_type $dev_path (Size: $device->{size})\n" unless $json_output;
+        my $zpool_output = "";
+        eval {
+            $zpool_output = `zpool import -d $dev_path 2>/dev/null`;
+        };
+        if ($@ || $? != 0) {
+            return;
+        }
+        
+        if ($zpool_output =~ /pool:\s+(\S+)/m) {
             my $pool_name = $1;
             my $status = get_pool_status($dev_path, $pool_name);
             
@@ -139,8 +175,16 @@ sub find_importable_pools {
     }
     
     # Check all devices
-    foreach my $device (@{$devices->{blockdevices}}) {
-        check_device($device);
+    if ($devices && $devices->{blockdevices}) {
+        foreach my $device (@{$devices->{blockdevices}}) {
+            eval {
+                check_device($device);
+            };
+            if ($@) {
+                output_error("Error checking device: $@");
+                return @pools;
+            }
+        }
     }
     
     return @pools;
@@ -221,6 +265,7 @@ if ($command eq 'import') {
         my $import_output = `zpool import 2>&1`;
         my @pools;
         my $results = [];
+        my $success = 0;
         
         # Parse the output to find all available pools
         while ($import_output =~ /pool:\s+(\S+).*?config:.*?\n\s+(\S+)\s+ONLINE/gs) {
@@ -241,25 +286,27 @@ if ($command eq 'import') {
                     success => JSON::false
                 };
                 
-                output_message("\nFound pool: $pool->{name} on device $pool->{device}", 1);
-                output_message("Attempting to import pool...", 1);
+                output_message("Found pool: $pool->{name} on device $pool->{device}", 1) unless $json_output;
+                output_message("Attempting to import pool...", 1) unless $json_output;
                 
                 my $result = `zpool import -f $pool->{name} 2>&1`;
                 if ($? == 0) {
                     $pool_result->{success} = JSON::true;
                     $pool_result->{message} = "Successfully imported";
-                    output_message("Successfully imported pool $pool->{name}", 1);
+                    $success = 1;
+                    output_message("Successfully imported pool $pool->{name}", 1) unless $json_output;
                 } else {
-                    output_message("Standard import failed, attempting force recovery...", 0);
+                    output_message("Standard import failed, attempting force recovery...", 0) unless $json_output;
                     $result = `zpool import -F -f $pool->{name} 2>&1`;
                     if ($? == 0) {
                         $pool_result->{success} = JSON::true;
                         $pool_result->{message} = "Successfully imported using force recovery";
-                        output_message("Successfully imported pool $pool->{name} using force recovery", 1);
+                        $success = 1;
+                        output_message("Successfully imported pool $pool->{name} using force recovery", 1) unless $json_output;
                     } else {
                         $pool_result->{success} = JSON::false;
                         $pool_result->{message} = "Failed to import: $result";
-                        output_message("Failed to import pool $pool->{name}: $result", 0);
+                        output_message("Failed to import pool $pool->{name}: $result", 0) unless $json_output;
                     }
                 }
                 push @$results, $pool_result;
@@ -267,7 +314,7 @@ if ($command eq 'import') {
             
             if ($json_output) {
                 print encode_json({
-                    success => 1,
+                    success => $success,
                     pools => $results
                 }) . "\n";
             }
