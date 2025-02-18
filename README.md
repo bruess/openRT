@@ -50,6 +50,15 @@ The installation process:
 6. Sets up automatic updates
 7. Configures the web interface
 
+
+## Screenshots
+<img width="300" alt="Screenshot 2025-02-18 at 10 46 16 AM" src="https://github.com/user-attachments/assets/2516ba68-4826-45f8-a273-3c51f4ba96ed" />
+<img width="300" alt="Screenshot 2025-02-18 at 10 46 24 AM" src="https://github.com/user-attachments/assets/7a14e570-9a2d-4c8e-a0ac-249c81604ada" />
+<img width="300" alt="Screenshot 2025-02-18 at 11 06 46 AM" src="https://github.com/user-attachments/assets/0a165195-6a6b-4605-b47a-dbb6f3a8fc95" />
+<img width="300" alt="Screenshot 2025-02-18 at 11 06 59 AM" src="https://github.com/user-attachments/assets/d779774f-4097-4c96-a01a-33af40aba3cb" />
+
+
+
 ## Directory Structure
 
 ```
