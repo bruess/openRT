@@ -38,15 +38,33 @@ cd /usr/share/plymouth/themes/openrt
 echo "Downloading OpenRT logo..."
 wget -q https://raw.githubusercontent.com/amcchord/openRT/main/static/openRT.png -O openrt-logo.png
 if [ ! -f openrt-logo.png ]; then
-    echo "Failed to download logo"
+    echo "Failed to download logo from GitHub"
+    # Fallback to local copy if available
+    if [ -f /usr/local/openRT/static/openRT.png ]; then
+        echo "Using local copy of OpenRT logo..."
+        cp /usr/local/openRT/static/openRT.png openrt-logo.png
+    else
+        echo "Error: Could not find OpenRT logo. Please ensure the logo exists at /usr/local/openRT/static/openRT.png"
+        exit 1
+    fi
+fi
+
+# Verify the logo file
+if [ ! -s openrt-logo.png ]; then
+    echo "Error: The logo file is empty"
     exit 1
 fi
+
+echo "Logo file verified successfully"
+
+# Ensure correct permissions
+chmod 644 openrt-logo.png
 
 # Create Plymouth theme configuration
 cat > openrt.plymouth << EOL
 [Plymouth Theme]
 Name=OpenRT
-Description=OpenRT Boot Theme
+Description=Display the OpenRT image at boot
 ModuleName=script
 
 [script]
@@ -56,18 +74,18 @@ EOL
 
 # Create Plymouth script
 cat > openrt.script << EOL
-wallpaper_image = Image("openrt-logo.png");
-screen_width = Window.GetWidth();
-screen_height = Window.GetHeight();
+image = Image("openrt-logo.png");
 
-scaled_image = wallpaper_image.Scale(screen_width, screen_height);
-scaled_image = scaled_image.SetOpacity(1);
+pos_x = Window.GetWidth()/2 - image.GetWidth()/2;
+pos_y = Window.GetHeight()/2 - image.GetHeight()/2;
 
-fun refresh_callback ()
-{
-    scaled_image.SetX(0);
-    scaled_image.SetY(0);
-    scaled_image.Draw();
+sprite = Sprite(image);
+sprite.SetX(pos_x);
+sprite.SetY(pos_y);
+
+fun refresh_callback () {
+  sprite.SetOpacity(1);
+  sprite.SetZ(15);
 }
 
 Plymouth.SetRefreshFunction(refresh_callback);
@@ -75,6 +93,8 @@ EOL
 
 # Install and set the theme
 echo "Setting up Plymouth theme..."
+# Remove stale plymouth alternative if present (fix for repeated runs)
+update-alternatives --remove default.plymouth /usr/share/plymouth/themes/openrt/openrt.plymouth 2>/dev/null || true
 update-alternatives --install /usr/share/plymouth/themes/default.plymouth default.plymouth /usr/share/plymouth/themes/openrt/openrt.plymouth 100
 update-alternatives --set default.plymouth /usr/share/plymouth/themes/openrt/openrt.plymouth
 
@@ -102,6 +122,9 @@ fi
 
 update-grub
 
+echo "Setting default Plymouth theme to openrt..."
+plymouth-set-default-theme openrt -R
+
 # Set up background for Chromium loading
 echo "Setting up background..."
 # Create a directory for the background if it doesn't exist
@@ -117,15 +140,40 @@ if ! command -v feh &> /dev/null; then
     apt-get install -y feh
 fi
 
-# Create new background setting script
-cat > /etc/profile.d/set-background.sh << EOL
-#!/bin/bash
-# Set background using feh if running in X environment
-if [ -n "\$DISPLAY" ]; then
-    feh --bg-scale /usr/local/share/backgrounds/openrt-logo.png &
-fi
-EOL
+# Remove old background setting script if it exists
+rm -f /etc/profile.d/set-background.sh
 
-chmod +x /etc/profile.d/set-background.sh
+# Add background setting to .xinitrc
+# First check if .xinitrc exists in /etc/skel (for new users)
+if [ ! -f /etc/skel/.xinitrc ]; then
+    touch /etc/skel/.xinitrc
+    chmod 644 /etc/skel/.xinitrc
+fi
+
+# Remove any existing feh background commands
+sed -i '/feh --bg-scale/d' /etc/skel/.xinitrc
+
+# Add the background setting command
+echo 'feh --bg-scale /usr/local/share/backgrounds/openrt-logo.png &' >> /etc/skel/.xinitrc
+
+# Also set it for existing users
+for userdir in /home/*; do
+    if [ -d "$userdir" ]; then
+        username=$(basename "$userdir")
+        # Skip if it's not a real user directory
+        if id "$username" >/dev/null 2>&1; then
+            echo "Setting up .xinitrc for user $username"
+            if [ ! -f "$userdir/.xinitrc" ]; then
+                cp /etc/skel/.xinitrc "$userdir/.xinitrc"
+            else
+                # Remove any existing feh background commands
+                sed -i '/feh --bg-scale/d' "$userdir/.xinitrc"
+                # Add the new command
+                echo 'feh --bg-scale /usr/local/share/backgrounds/openrt-logo.png &' >> "$userdir/.xinitrc"
+            fi
+            chown $username:$username "$userdir/.xinitrc"
+        fi
+    fi
+done
 
 echo "Setup completed successfully! Please reboot to see the changes."
