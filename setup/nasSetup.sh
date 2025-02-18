@@ -53,7 +53,15 @@ apt-get update
 # Force reinstall of nfs-kernel-server to ensure it's properly installed
 DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-kernel-server
 
-for package in samba smbclient vsftpd openssh-server zfsutils-linux acl; do
+# Ensure ACL package is installed first
+echo "Installing and verifying ACL package..."
+DEBIAN_FRONTEND=noninteractive apt-get install -y acl
+if ! command -v setfacl &> /dev/null; then
+    echo "Error: setfacl command not found after installing acl package. Exiting."
+    exit 1
+fi
+
+for package in samba smbclient vsftpd openssh-server zfsutils-linux; do
     if ! is_installed "$package"; then
         echo "Installing $package..."
         DEBIAN_FRONTEND=noninteractive apt-get install -y "$package"
