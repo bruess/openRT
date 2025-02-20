@@ -27,6 +27,17 @@ The easiest way to install openRT is to download the pre-built image from the re
 
 [Download for Arm64](https://www.slide.recipes/openRT/OpenRT-Arm64VM.zip)
 
+## ⚠️ Important Disclaimer
+
+**THIS SOFTWARE IS INTENDED FOR LAB/TEST ENVIRONMENTS ONLY**
+
+This tool is designed for accessing and examining backup data in controlled environments. It is NOT meant to be:
+- Deployed as a public-facing server
+- Used in production environments
+- Exposed to the internet
+- Used as a permanent running system
+
+Please ensure this system is deployed only in isolated lab/test environments with appropriate security controls in place.
 
 ## Installation
 
