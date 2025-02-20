@@ -19,14 +19,6 @@ OpenRT is an open-source system for mounting and managing backup volumes from va
 - 12GB+ available storage space
 - Network connectivity
 
-## Download Pre-built Image
-
-The easiest way to install openRT is to download the pre-built image from the releases page. These are bootable in VirtualBox and VMWare and Hyper-V.
-
-[Download for x86_64](https://www.slide.recipes/openRT/OpenRT-x86VM.zip)
-
-[Download for Arm64](https://www.slide.recipes/openRT/OpenRT-Arm64VM.zip)
-
 ## ⚠️ Important Disclaimer
 
 **THIS SOFTWARE IS INTENDED FOR LAB/TEST ENVIRONMENTS ONLY**
@@ -38,6 +30,15 @@ This tool is designed for accessing and examining backup data in controlled envi
 - Used as a permanent running system
 
 Please ensure this system is deployed only in isolated lab/test environments with appropriate security controls in place.
+
+## Download Pre-built Image
+
+The easiest way to install openRT is to download the pre-built image from the releases page. These are bootable in VirtualBox and VMWare and Hyper-V.
+
+[Download for x86_64](https://www.slide.recipes/openRT/OpenRT-x86VM.zip)
+
+[Download for Arm64](https://www.slide.recipes/openRT/OpenRT-Arm64VM.zip)
+
 
 ## Installation
 
