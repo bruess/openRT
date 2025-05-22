@@ -150,11 +150,34 @@ die "This script must be run as root\n" unless $> == 0;
 
 # Function to identify RT pool
 sub find_rt_pool {
+    # Check for specific pool name from environment variable (highest priority)
+    if (defined $ENV{RT_POOL_NAME}) {
+        my $pool_name = $ENV{RT_POOL_NAME};
+        my @pools = `zpool list -H -o name`;
+        chomp(@pools);
+        foreach my $pool (@pools) {
+            return $pool if $pool eq $pool_name;
+        }
+        # If specified pool not found, warn but continue search
+        print "Warning: Pool specified in RT_POOL_NAME ($pool_name) not found.\n" unless $json_only;
+    }
+    
+    # Get custom pattern from environment or use default patterns
+    my $pool_pattern;
+    if (defined $ENV{RT_POOL_PATTERN}) {
+        $pool_pattern = $ENV{RT_POOL_PATTERN};
+    } else {
+        # Default patterns: rtPool-\d+ or revRT
+        $pool_pattern = qr/^(rtPool-\d+|revRT.*?)$/;
+    }
+    
+    # Search for pool using pattern
     my @pools = `zpool list -H -o name`;
     chomp(@pools);
     foreach my $pool (@pools) {
-        return $pool if $pool =~ /^rtPool-\d+$/;
+        return $pool if $pool =~ /$pool_pattern/;
     }
+    
     return undef;
 }
 
@@ -202,10 +225,17 @@ unless ($json_only) {
 }
 
 # Initialize agents dataset path
-$agents_dataset = "$rt_pool/home/agents";
+# Check for custom agents path from environment variable
+my $agents_path = $ENV{RT_AGENTS_PATH} || "home/agents";
+$agents_dataset = "$rt_pool/$agents_path";
 my $agents_info = `zfs list -H -o name,mountpoint "$agents_dataset" 2>&1`;
 if ($? != 0) {
     die "Agents dataset ($agents_dataset) does not exist in the RT pool.\n";
+}
+
+unless ($json_only) {
+    print format_human_readable("Agents Path", $agents_path);
+    print format_human_readable("Agents Dataset", $agents_dataset);
 }
 
 # Create temporary mount point

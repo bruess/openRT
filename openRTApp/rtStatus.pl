@@ -135,6 +135,29 @@ sub check_drives {
     return ($has_extra_drives, \@extra_drives);
 }
 
+# Function to determine if a pool is a valid RT pool
+# based on its name and environment variables
+sub is_rt_pool {
+    my ($pool_name) = @_;
+    
+    # Check for specific pool name from environment variable (highest priority)
+    if (defined $ENV{RT_POOL_NAME}) {
+        return 1 if $pool_name eq $ENV{RT_POOL_NAME};
+    }
+    
+    # Get custom pattern from environment or use default patterns
+    my $pool_pattern;
+    if (defined $ENV{RT_POOL_PATTERN}) {
+        $pool_pattern = $ENV{RT_POOL_PATTERN};
+    } else {
+        # Default patterns: rtPool-\d+ or revRT
+        $pool_pattern = qr/^(rtPool-\d+|revRT.*?)$/;
+    }
+    
+    # Match against pattern
+    return $pool_name =~ /$pool_pattern/;
+}
+
 # Function to check ZFS pool status
 # Returns: ($has_imported_pool, $has_available_pool, \@imported_pools, \@available_pools)
 #   - $has_imported_pool: Boolean indicating if any pools are imported
@@ -151,22 +174,38 @@ sub check_zfs_pools {
     # Check for available but not imported pools
     my $import_output = `zpool import 2>&1`;
     while ($import_output =~ /pool:\s+(\S+).*?state:\s+(\S+)/gs) {
+        my $pool_name = $1;
+        my $pool_state = $2;
+        
+        # Skip if not an RT pool, unless RT_EXPORT_ALL is set
+        next unless is_rt_pool($pool_name) || $ENV{RT_EXPORT_ALL};
+        
         $has_available_pool = 1;
         push @available_pools, {
-            name => $1,
-            state => $2
+            name => $pool_name,
+            state => $pool_state,
+            is_rt_pool => is_rt_pool($pool_name) ? JSON::true : JSON::false
         };
     }
     
     # Check currently imported pools
     if ($? == 0 && @pools) {
-        $has_imported_pool = 1;
         foreach my $pool (@pools) {
             if ($pool =~ /^(\S+)\s+(\S+)\s+(\S+)/) {
+                my $pool_name = $1;
+                my $pool_size = $2;
+                my $pool_allocated = $3;
+                
+                # Skip if not an RT pool, unless RT_EXPORT_ALL is set
+                next unless is_rt_pool($pool_name) || $ENV{RT_EXPORT_ALL};
+                
+                $has_imported_pool = 1 if is_rt_pool($pool_name);
+                
                 push @imported_pools, {
-                    name => $1,
-                    size => $2,
-                    allocated => $3
+                    name => $pool_name,
+                    size => $pool_size,
+                    allocated => $pool_allocated,
+                    is_rt_pool => is_rt_pool($pool_name) ? JSON::true : JSON::false
                 };
             }
         }

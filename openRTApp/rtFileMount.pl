@@ -385,8 +385,13 @@ die "No RT pool found in metadata\n" unless $rt_pool;
 debug("Using RT pool: $rt_pool");
 
 # Set up ZFS dataset paths for accessing snapshots
-my $agents_dataset = "$rt_pool/home/agents";
+# Check for custom agents path from environment variable
+my $agents_path = $ENV{RT_AGENTS_PATH} || "home/agents";
+my $agents_dataset = "$rt_pool/$agents_path";
 my $snapshot_path = "$agents_dataset/$agent_name";
+
+debug("Using agents path: $agents_path");
+debug("Full agents dataset path: $agents_dataset");
 
 # If agent was found by ID, use the ID for the snapshot path instead of name
 if ($agent_id_found && $agent_id_found ne $agent_name) {

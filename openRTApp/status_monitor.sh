@@ -16,7 +16,15 @@ check_automount_enabled() {
 
 # Function to get current pool status
 get_pool_status() {
-    perl "$SCRIPT_DIR/rtStatus.pl" -j | jq -r '.status'
+    # Use environment variables if they exist by passing them through
+    if [[ -n "$RT_POOL_NAME" ]] || [[ -n "$RT_POOL_PATTERN" ]] || [[ -n "$RT_EXPORT_ALL" ]]; then
+        # Preserve environment variables when calling rtStatus.pl
+        env RT_POOL_NAME="$RT_POOL_NAME" RT_POOL_PATTERN="$RT_POOL_PATTERN" RT_EXPORT_ALL="$RT_EXPORT_ALL" \
+            perl "$SCRIPT_DIR/rtStatus.pl" -j | jq -r '.status'
+    else
+        # Normal execution without environment variables
+        perl "$SCRIPT_DIR/rtStatus.pl" -j | jq -r '.status'
+    fi
 }
 
 # Function to handle status changes

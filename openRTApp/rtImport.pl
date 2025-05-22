@@ -289,6 +289,29 @@ sub find_importable_pools {
     return @pools;
 }
 
+# Function to determine if a pool is a valid RT pool
+# based on its name and environment variables
+sub is_rt_pool {
+    my ($pool_name) = @_;
+    
+    # Check for specific pool name from environment variable (highest priority)
+    if (defined $ENV{RT_POOL_NAME}) {
+        return 1 if $pool_name eq $ENV{RT_POOL_NAME};
+    }
+    
+    # Get custom pattern from environment or use default patterns
+    my $pool_pattern;
+    if (defined $ENV{RT_POOL_PATTERN}) {
+        $pool_pattern = $ENV{RT_POOL_PATTERN};
+    } else {
+        # Default patterns: rtPool-\d+ or revRT
+        $pool_pattern = qr/^(rtPool-\d+|revRT.*?)$/;
+    }
+    
+    # Match against pattern
+    return $pool_name =~ /$pool_pattern/;
+}
+
 # Utility function to check current pool status using rtStatus.pl
 # Returns decoded JSON status information or undef on failure
 sub check_pool_status {
@@ -326,6 +349,12 @@ if ($command eq 'import') {
         my $import_output = `zpool import -d $device_path 2>&1`;
         if ($import_output =~ /pool:\s+(\S+)/m) {
             my $pool_name = $1;
+            
+            # Check if this is an RT pool or if we should import all
+            unless (is_rt_pool($pool_name) || $ENV{RT_EXPORT_ALL}) {
+                output_message("Skipping non-RT pool: $pool_name (set RT_EXPORT_ALL=1 to import all pools)", 0);
+                exit 0;
+            }
             
             # Prevent duplicate imports
             if (is_pool_already_imported($pool_name)) {
@@ -381,7 +410,19 @@ if ($command eq 'import') {
             # Skip pools that are already imported
             next if is_pool_already_imported($pool_name);
             
-            push @pools, { name => $pool_name, device => $device };
+            # Skip non-RT pools unless RT_EXPORT_ALL is set
+            unless (is_rt_pool($pool_name) || $ENV{RT_EXPORT_ALL}) {
+                unless ($json_output) {
+                    print "Skipping non-RT pool: $pool_name (set RT_EXPORT_ALL=1 to import all pools)\n";
+                }
+                next;
+            }
+            
+            push @pools, { 
+                name => $pool_name, 
+                device => $device,
+                is_rt_pool => is_rt_pool($pool_name) ? 1 : 0 
+            };
         }
         
         if (@pools) {
@@ -390,6 +431,7 @@ if ($command eq 'import') {
                 my $pool_result = {
                     pool => $pool->{name},
                     device => $pool->{device},
+                    is_rt_pool => $pool->{is_rt_pool} ? JSON::true : JSON::false,
                     success => JSON::false
                 };
                 
@@ -445,22 +487,27 @@ elsif ($command eq 'export') {
         my $pool_name = `zpool list -H -o name -d $device_path 2>/dev/null`;
         chomp($pool_name);
         if ($pool_name) {
-            # Attempt to export the pool
-            my $result = `zpool export $pool_name 2>&1`;
-            my $success = $? == 0;
-            my $message = $success ? "Successfully exported pool $pool_name" : "Failed to export pool $pool_name: $result";
-            
-            # Output results in requested format
-            if ($json_output) {
-                print encode_json({
-                    success => $success,
-                    pool => $pool_name,
-                    message => $message
-                }) . "\n";
+            # Check if this is an RT pool or if we should export all
+            if (is_rt_pool($pool_name) || $ENV{RT_EXPORT_ALL}) {
+                # Attempt to export the pool
+                my $result = `zpool export $pool_name 2>&1`;
+                my $success = $? == 0;
+                my $message = $success ? "Successfully exported pool $pool_name" : "Failed to export pool $pool_name: $result";
+                
+                # Output results in requested format
+                if ($json_output) {
+                    print encode_json({
+                        success => $success,
+                        pool => $pool_name,
+                        message => $message
+                    }) . "\n";
+                } else {
+                    print "$message\n";
+                }
+                die $message unless $success;
             } else {
-                print "$message\n";
+                output_message("Skipping non-RT pool: $pool_name (set RT_EXPORT_ALL=1 to export all pools)", 0);
             }
-            die $message unless $success;
         } else {
             output_error("No active ZFS pool found on $device_path");
         }
@@ -471,13 +518,22 @@ elsif ($command eq 'export') {
             # Skip the root pool for system safety
             next if $pool eq 'rpool';
             
+            # Skip non-RT pools unless RT_EXPORT_ALL is set
+            unless (is_rt_pool($pool) || $ENV{RT_EXPORT_ALL}) {
+                unless ($json_output) {
+                    print "Skipping non-RT pool: $pool (set RT_EXPORT_ALL=1 to export all pools)\n";
+                }
+                next;
+            }
+            
             # Attempt to export each pool
             my $result = `zpool export $pool 2>&1`;
             my $success = $? == 0;
             my $pool_result = {
                 pool => $pool,
                 success => $success,
-                message => $success ? "Successfully exported" : "Failed to export: $result"
+                message => $success ? "Successfully exported" : "Failed to export: $result",
+                is_rt_pool => is_rt_pool($pool) ? JSON::true : JSON::false
             };
             push @$results, $pool_result;
             

@@ -103,7 +103,15 @@ $status->{current_step} = "Checking pool status";
 update_status();
 
 my $status_script = "$script_dir/rtStatus.pl";
-my $status_output = `perl "$status_script" -j`;
+my $status_output;
+
+# Pass through environment variables if they exist
+if (defined $ENV{RT_POOL_NAME} || defined $ENV{RT_POOL_PATTERN} || defined $ENV{RT_EXPORT_ALL} || defined $ENV{RT_AGENTS_PATH}) {
+    $status_output = `perl "$status_script" -j`;
+} else {
+    $status_output = `perl "$status_script" -j`;
+}
+
 my $pool_status;
 eval {
     $pool_status = decode_json($status_output);
@@ -128,10 +136,7 @@ my $import_script = "$script_dir/rtImport.pl";
 system("perl", $import_script, "import");
 
 # Verify import using rtStatus.pl
-my $status_script = "$script_dir/rtStatus.pl";
-my $status_output = `perl "$status_script" -j`;
-my $pool_status;
-
+$status_output = `perl "$status_script" -j`;
 eval {
     $pool_status = decode_json($status_output);
 };
@@ -177,16 +182,9 @@ update_status();
 $status->{current_step} = "Mounting agents";
 update_status();
 
-
-
-
-
 my $mount_script = "$script_dir/rtFileMount.pl";
 
 system("perl", $mount_script, "cleanup"); # Clean up any existing mounts before starting
-
-
-
 
 foreach my $agent_id (keys %{$metadata->{agents}}) {
     my $agent_info = $metadata->{agents}->{$agent_id};
