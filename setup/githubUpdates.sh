@@ -29,7 +29,7 @@ if [ "$1" = "remote" ]; then
             echo "Cloning repository to temporary directory..."
             cd "$TEMP_DIR"
             git clone https://github.com/amcchord/openRT.git openRT_repo
-            ount
+            
             if [ $? -eq 0 ]; then
                 # Use rsync to copy files, which handles existing directories better
                 echo "Syncing openRTApp directory..."
