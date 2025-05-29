@@ -21,6 +21,21 @@ exec("mount | grep '$mount_path' 2>&1", $output, $return_var);
 // Also check for ZFS clones
 $clone_output = [];
 exec("zfs list -H -o name | grep 'mount_' | grep '/agents/$agent_id/' 2>&1", $clone_output, $return_var);
+// Filter clone output to only include mounted clones
+$mounted_clones = [];
+foreach ($clone_output as $clone) {
+    $clone = trim($clone);
+    if (!empty($clone)) {
+        // Check if clone has a mountpoint and is mounted
+        $mount_check = [];
+        exec("zfs get -H -o value mounted $clone 2>/dev/null", $mount_check);
+        if (!empty($mount_check) && trim($mount_check[0]) === 'yes') {
+            $mounted_clones[] = $clone;
+        }
+    }
+}
+$clone_output = $mounted_clones;
+
 
 // Return mounted status - consider either regular mounts or clones
 echo json_encode([

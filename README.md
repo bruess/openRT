@@ -1,15 +1,23 @@
 # openRT
 
-OpenRT is an open-source system for mounting and managing backup volumes from various vendors (Currently only tested with Datto). It provides a web-based interface for easy management and automation of backup volume mounting operations.
+OpenRT is an open-source system for mounting and managing backup volumes from various vendors (Currently only tested with Datto and RevRT). It provides a web-based interface for easy management and automation of backup volume mounting operations.
+
+## What's New in v1.2
+
+- **Enhanced Logging**: Comprehensive logging system for better troubleshooting and monitoring
+- **Web-based Log Viewer**: Built-in log viewer in the web interface for easy access to system logs
+- **RevRT Support**: Added support for RevRT pool and metadata formats
+- **Improved Reliability**: Enhanced robustness in OpenRTApp Perl scripts for better error handling
 
 ## Features
 
 - **Web Interface**: Modern, responsive web UI for managing backup volumes
 - **Automated Mounting**: Support for automatic mounting of backup volumes
-- **Multi-vendor Support**: Compatible with various backup vendor formats
+- **Multi-vendor Support**: Compatible with various backup vendor formats (Datto, RevRT)
 - **ZFS Integration**: Efficient handling of backup volumes using ZFS clones
 - **VMDK Generation**: Automatic creation of VMDK descriptors for VM import
 - **Security**: Built-in user management and secure mounting operations
+- **Comprehensive Logging**: Detailed logging with web-based log viewer for monitoring and troubleshooting
 
 ## System Requirements
 
@@ -108,16 +116,19 @@ After installation:
    - Monitor system status
    - Export backup pools
    - Explore mounted volumes
+   - View system logs and troubleshoot issues
 
 ## Command Line Tools
 
-OpenRT provides several command-line utilities in `/usr/local/openRT/openRTApp/`:
+OpenRT provides several command-line utilities in `/usr/local/openRT/openRTApp/` with enhanced robustness and error handling:
 
 - `rtFileMount.pl`: Mount backup volumes
 - `rtAutoMount.pl`: Configure automatic mounting
 - `rtStatus.pl`: Check system status
 - `rtMetadata.pl`: Manage backup metadata
 - `rtImport.pl`: Import backup volumes
+
+*Note: All Perl scripts have been enhanced in v1.2 with improved error handling and robustness for better reliability.*
 
 ## Automatic Updates
 

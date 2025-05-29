@@ -152,6 +152,12 @@ $openRTVersion = getOpenRTVersion();
         .explore-button:hover {
             background-color: #0b5ed7;
         }
+        .logs-button {
+            background-color: #6f42c1;
+        }
+        .logs-button:hover {
+            background-color: #5a32a3;
+        }
         .action-button.loading .spinner {
             display: inline-block;
         }
@@ -213,6 +219,21 @@ $openRTVersion = getOpenRTVersion();
         #automountDetails .detail-time {
             color: #6c757d;
             margin-right: 0.5rem;
+        }
+        .small-logs-button {
+            background-color: #6f42c1;
+            color: white;
+            border: none;
+            padding: 0.25rem 0.75rem;
+            font-size: 0.875rem;
+            border-radius: 0.25rem;
+            text-decoration: none;
+            transition: background-color 0.2s;
+            margin-left: 1rem;
+        }
+        .small-logs-button:hover {
+            background-color: #5a32a3;
+            color: white;
         }
     </style>
 </head>
@@ -276,7 +297,9 @@ $openRTVersion = getOpenRTVersion();
         </div>
         <div class="container">
             <div class="d-flex justify-content-between align-items-center">
-                <span class="text-white">OpenRT v<?php echo $openRTVersion; ?></span>
+                <span class="text-white">OpenRT v<?php echo $openRTVersion; ?>
+                    <a href="log_viewer.php" class="small-logs-button">View Logs</a>
+                </span>
                 <div class="form-check form-switch mb-0">
                     <input class="form-check-input" type="checkbox" id="automountToggle">
                     <label class="form-check-label text-white" for="automountToggle">Automount</label>

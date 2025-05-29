@@ -400,8 +400,16 @@
         // Function to check if an agent is mounted
         async function checkMountStatus(agentId) {
             try {
+                console.log(`Checking mount status for agent: ${agentId}`);
                 const response = await fetch(`check_mount.php?agent_id=${encodeURIComponent(agentId)}`);
+                
+                if (!response.ok) {
+                    console.error(`HTTP error checking mount status: ${response.status} ${response.statusText}`);
+                    return false;
+                }
+                
                 const result = await response.json();
+                console.log(`Mount status response for ${agentId}:`, result);
                 
                 // If the check was successful, return the mounted status
                 if (result.success) {
@@ -409,10 +417,10 @@
                 }
                 
                 // If there was an error, log it and assume not mounted
-                console.error('Error in mount status response:', result.error || 'Unknown error');
+                console.error('Error in mount status response:', result.error || result.message || 'Unknown error');
                 return false;
             } catch (error) {
-                console.error('Error checking mount status:', error);
+                console.error(`Error checking mount status for ${agentId}:`, error);
                 return false;
             }
         }
@@ -466,8 +474,9 @@
                         
                         // Format storage info with better readability
                         const storageInfo = [];
-                        if (info.Volumes) {
-                            Object.entries(info.Volumes).forEach(([mount, vol]) => {
+                        const volumes = info.Volumes || info.volumes;
+                        if (volumes) {
+                            Object.entries(volumes).forEach(([mount, vol]) => {
                                 // Skip Recovery volumes
                                 if (mount.toLowerCase() === 'recovery' || mount.toLowerCase().includes('recovery')) {
                                     return;
@@ -488,18 +497,34 @@
                         }
 
                         // Check if agent is mounted
-                        const isMounted = await checkMountStatus(agentId);
-                        const actionButton = isMounted ? 
-                            `<a href="http://${SERVER_IP}/files/${agentId}/" class="btn btn-sm btn-info">
-                                <img src="assets/images/spinner.svg" alt="Loading" class="spinner d-none" style="width: 1rem; height: 1rem;">
-                                <span class="button-text">Explore Files</span>
-                            </a>` :
-                            `<button class="btn btn-sm btn-primary mount-button" 
-                                    onclick="mountAgent('${agentId}')"
-                                    data-agent-id="${agentId}">
+                        let isMounted = false;
+                        let actionButton = '';
+                        
+                        try {
+                            isMounted = await checkMountStatus(agentId);
+                            console.log(`Agent ${agentId} mount status:`, isMounted);
+                            
+                            actionButton = isMounted ? 
+                                `<a href="http://${SERVER_IP}/files/${agentId}/" class="btn btn-sm btn-info">
+                                    <img src="assets/images/spinner.svg" alt="Loading" class="spinner d-none" style="width: 1rem; height: 1rem;">
+                                    <span class="button-text">Explore Files</span>
+                                </a>` :
+                                `<button class="btn btn-sm btn-primary mount-button" 
+                                        onclick="mountAgent('${agentId}')"
+                                        data-agent-id="${agentId}">
+                                    <img src="assets/images/spinner.svg" alt="Loading" class="spinner d-none" style="width: 1rem; height: 1rem;">
+                                    <span class="button-text">Mount All</span>
+                                </button>`;
+                        } catch (error) {
+                            console.error(`Error creating action button for agent ${agentId}:`, error);
+                            // Fallback to mount button if there's an error
+                            actionButton = `<button class="btn btn-sm btn-primary mount-button" 
+                                            onclick="mountAgent('${agentId}')"
+                                            data-agent-id="${agentId}">
                                 <img src="assets/images/spinner.svg" alt="Loading" class="spinner d-none" style="width: 1rem; height: 1rem;">
                                 <span class="button-text">Mount All</span>
                             </button>`;
+                        }
 
                         row.innerHTML = `
                             <td>${info.hostname || 'Unknown'}</td>

@@ -92,6 +92,81 @@ use Getopt::Long;
 use File::Basename;
 use Cwd 'abs_path';
 
+# Global logging variables
+my $log_enabled = 0;
+my $log_file = '';
+my $log_fh;
+
+# Initialize logging functionality
+sub init_logging {
+    my $log_dir = "/usr/local/openRT/logs";
+    return unless -d $log_dir;
+    
+    $log_enabled = 1;
+    my $script_name = basename($0, '.pl');
+    my $timestamp = strftime("%Y%m%d_%H%M%S", localtime);
+    $log_file = "$log_dir/${script_name}_${timestamp}_$$.log";
+    
+    if (open($log_fh, '>>', $log_file)) {
+        write_log("=== Starting $script_name at " . strftime("%Y-%m-%d %H:%M:%S", localtime) . " ===");
+        write_log("Process ID: $$");
+        write_log("Script location: " . abs_path($0));
+        write_log("Working directory: " . Cwd::getcwd());
+        write_log("User ID: $>");
+        write_log("Command line: @ARGV");
+    } else {
+        warn "Warning: Could not open log file $log_file: $!";
+        $log_enabled = 0;
+    }
+}
+
+# Write to log file with timestamp
+sub write_log {
+    my ($message, $level) = @_;
+    return unless $log_enabled && $log_fh;
+    
+    $level ||= 'INFO';
+    my $timestamp = strftime("%Y-%m-%d %H:%M:%S", localtime);
+    print $log_fh "[$timestamp] [$level] $message\n";
+    $log_fh->flush();
+}
+
+# Log errors and continue execution
+sub log_error {
+    my ($message) = @_;
+    write_log($message, 'ERROR');
+    warn "$message\n";
+}
+
+# Log warnings
+sub log_warning {
+    my ($message) = @_;
+    write_log($message, 'WARN');
+    warn "$message\n";
+}
+
+# Log debug information
+sub log_debug {
+    my ($message) = @_;
+    write_log($message, 'DEBUG');
+}
+
+# Clean up logging on exit
+sub cleanup_logging {
+    if ($log_enabled && $log_fh) {
+        write_log("=== Script completed at " . strftime("%Y-%m-%d %H:%M:%S", localtime) . " ===");
+        close($log_fh);
+    }
+}
+
+# Initialize logging
+init_logging();
+
+# Ensure cleanup on exit
+END {
+    cleanup_logging();
+}
+
 # Debug flag - Controls detailed output for troubleshooting
 my $debug = 1;  # Set to 0 to disable debug output
 
@@ -99,20 +174,25 @@ my $debug = 1;  # Set to 0 to disable debug output
 my $cleanup_mode = 0;
 my $json_output = 0;
 my $cleanup_agent = '';
+write_log("Parsing command line options...");
 GetOptions(
     'cleanup:s' => \$cleanup_agent,  # Optional agent name for cleanup
     'j' => \$json_output            # JSON output format flag
 ) or die "Usage: $0 [-cleanup[=agent_name]] [-j] agent_name [snapshot_epoch|all]\n";
 
+write_log("Command line options parsed - cleanup_agent: '$cleanup_agent', json_output: $json_output");
+
 # Handle 'cleanup' as a positional argument
 if (!$cleanup_agent && @ARGV > 0 && $ARGV[0] eq 'cleanup') {
     $cleanup_agent = '1';  # Set to same value as -cleanup=1
     shift @ARGV;  # Remove the 'cleanup' argument
+    write_log("Detected 'cleanup' as positional argument");
 }
 
 # Debug print function for controlled output of diagnostic information
 sub debug {
     my ($msg) = @_;
+    write_log($msg, 'DEBUG');
     print "DEBUG: $msg\n" if $debug && !$json_output;
 }
 
@@ -130,13 +210,16 @@ my $mount_info = {
 # - Removing mount directories
 sub cleanup_mounts {
     my ($base_dir, $agent_name, $is_cleanup_mode) = @_;
+    write_log("Starting cleanup" . ($agent_name ? " for agent: $agent_name" : " for all agents"));
     debug("Starting cleanup" . ($agent_name ? " for agent: $agent_name" : " for all agents"));
     
     my @cleaned = ();  # Track all cleaned resources for reporting
     
     # Step 1: First unmount all NTFS volumes
     # These are typically NTFS volumes mounted from .datto files
+    write_log("Step 1: Unmounting NTFS volumes");
     my @mounts = `mount | grep $base_dir`;
+    write_log("Found " . scalar(@mounts) . " existing mounts in $base_dir");
     foreach my $mount (@mounts) {
         if ($mount =~ /on\s+(\S+)\s+type\s+fuseblk/) {
             my $mount_point = $1;
@@ -146,6 +229,7 @@ sub cleanup_mounts {
                 next unless $mount_point =~ m|$base_dir/$agent_name|;
             }
             
+            write_log("Unmounting NTFS volume: $mount_point");
             debug("Unmounting NTFS volume: $mount_point");
             system("umount -f -l $mount_point 2>/dev/null");
             push @cleaned, $mount_point;
@@ -153,15 +237,19 @@ sub cleanup_mounts {
     }
     
     # Give system time to process unmounts
+    write_log("Waiting 2 seconds for unmounts to complete");
     sleep(2);
     
     # Step 2: Clean up loop devices
     # These are used to mount the .datto files
+    write_log("Step 2: Cleaning up loop devices");
     debug("Cleaning up loop devices");
     my @losetup = `losetup -a | grep .datto`;
+    write_log("Found " . scalar(@losetup) . " loop devices with .datto files");
     foreach my $loop (@losetup) {
         if ($loop =~ /^(\/dev\/loop\d+):\s+.*\.datto/) {
             my $loop_dev = $1;
+            write_log("Detaching loop device: $loop_dev");
             debug("Detaching loop device: $loop_dev");
             system("losetup -d $loop_dev 2>/dev/null");
             push @cleaned, $loop_dev;
@@ -170,7 +258,9 @@ sub cleanup_mounts {
     
     # Step 3: Clean up ZFS clones and mounts
     # These are temporary clones created to access .datto files
+    write_log("Step 3: Cleaning up ZFS clones");
     my @clones = `zfs list -H -o name | grep mount_`;
+    write_log("Found " . scalar(@clones) . " ZFS clones to clean up");
     foreach my $clone (@clones) {
         chomp($clone);
         # Filter by agent name if specified
@@ -178,25 +268,30 @@ sub cleanup_mounts {
             next unless $clone =~ m|/agents/$agent_name/|;
         }
         
+        write_log("Processing ZFS clone: $clone");
         debug("Processing ZFS clone: $clone");
         
         # Get mount point before unmounting
         my $mountpoint = `zfs get -H -o value mountpoint $clone 2>/dev/null`;
         chomp($mountpoint);
+        write_log("Clone mountpoint: $mountpoint");
         
         # First try unmounting if mounted
         my $is_mounted = `zfs get -H -o value mounted $clone 2>/dev/null` =~ /yes/;
         if ($is_mounted) {
+            write_log("Clone is mounted at $mountpoint, attempting unmount");
             debug("Clone is mounted at $mountpoint, attempting unmount");
             system("zfs unmount -f $clone 2>/dev/null");
             sleep(1);
         }
         
         # Try to destroy the clone
+        write_log("Attempting to destroy clone: $clone");
         system("zfs destroy -f $clone 2>/dev/null");
         
         # If clone still exists, try more aggressive cleanup
         if (`zfs list -H -o name $clone 2>/dev/null`) {
+            write_log("Clone persists, trying aggressive cleanup");
             debug("Clone persists, trying aggressive cleanup");
             # Force unmount any remaining processes
             system("fuser -k $mountpoint 2>/dev/null") if $mountpoint;
@@ -206,6 +301,7 @@ sub cleanup_mounts {
             
             # Final verification
             if (`zfs list -H -o name $clone 2>/dev/null`) {
+                log_warning("Unable to fully clean up clone: $clone");
                 debug("Warning: Unable to fully clean up clone: $clone");
             }
         }
@@ -213,17 +309,22 @@ sub cleanup_mounts {
     }
     
     # Step 4: Remove mount directories, but only after everything is unmounted
+    write_log("Step 4: Removing mount directories");
     if ($agent_name && $agent_name ne '1') {
         my $agent_dir = "$base_dir/$agent_name";
         my $agent_temp_dir = "$base_dir/zfs_block/$agent_name";
         
+        write_log("Checking for agent directories: $agent_dir, $agent_temp_dir");
+        
         # Check if any mounts still exist before removing
         my @remaining_mounts = `mount | grep -E "$agent_dir|$agent_temp_dir"`;
         if (@remaining_mounts) {
+            log_warning("Found remaining mounts, attempting force unmount");
             debug("Warning: Found remaining mounts, attempting force unmount");
             foreach my $mount (@remaining_mounts) {
                 if ($mount =~ /on\s+(\S+)\s+/) {
                     my $mount_point = $1;
+                    write_log("Force unmounting: $mount_point");
                     system("umount -f -l $mount_point 2>/dev/null");
                 }
             }
@@ -232,20 +333,26 @@ sub cleanup_mounts {
         
         # Now try to remove directories
         if (-d $agent_dir) {
+            write_log("Removing directory: $agent_dir");
             debug("Removing directory: $agent_dir");
             system("rm -rf $agent_dir 2>/dev/null");
             if (-d $agent_dir) {
+                log_warning("Failed to remove $agent_dir");
                 debug("Warning: Failed to remove $agent_dir");
             }
         }
         if (-d $agent_temp_dir) {
+            write_log("Removing temporary directory: $agent_temp_dir");
             debug("Removing temporary directory: $agent_temp_dir");
             system("rm -rf $agent_temp_dir 2>/dev/null");
             if (-d $agent_temp_dir) {
+                log_warning("Failed to remove $agent_temp_dir");
                 debug("Warning: Failed to remove $agent_temp_dir");
             }
         }
     }
+    
+    write_log("Cleanup completed. Cleaned " . scalar(@cleaned) . " items");
     
     # Output results based on format preference
     if ($json_output && $is_cleanup_mode) {
@@ -262,16 +369,25 @@ sub cleanup_mounts {
 
 # Get absolute path of script directory for locating related scripts
 my $script_dir = dirname(abs_path($0));
+write_log("Script directory: $script_dir");
 
 # Validate root privileges required for mount operations
-die "This script must be run as root\n" unless $> == 0;
+write_log("Checking root privileges...");
+if ($> != 0) {
+    log_error("Script must be run as root (current UID: $>)");
+    die "This script must be run as root\n";
+}
+write_log("Root privileges confirmed");
 
 # Define base directories for mount operations
 my $mount_base = "/rtMount";                # Main directory for mounted volumes
 my $zfs_block_base = "$mount_base/zfs_block";  # Temporary location for ZFS mounts
+write_log("Mount base directory: $mount_base");
+write_log("ZFS block base directory: $zfs_block_base");
 
 # Handle cleanup mode if specified
 if ($cleanup_agent ne '') {
+    write_log("Cleanup mode requested for agent: " . ($cleanup_agent eq '1' ? 'all' : $cleanup_agent));
     cleanup_mounts($mount_base, $cleanup_agent eq '1' ? '' : $cleanup_agent, 1);
     exit 0;
 }
@@ -279,15 +395,22 @@ if ($cleanup_agent ne '') {
 # Parse and validate command line arguments
 my $agent_name = shift @ARGV;
 my $snapshot_epoch = shift @ARGV;
+write_log("Agent name from arguments: " . ($agent_name // 'none'));
+write_log("Snapshot epoch from arguments: " . ($snapshot_epoch // 'none'));
 
-die "Usage: $0 [-cleanup[=agent_name]] [-j] agent_name [snapshot_epoch|all]\n" unless $agent_name;
+if (!$agent_name) {
+    log_error("Missing required agent_name argument");
+    die "Usage: $0 [-cleanup[=agent_name]] [-j] agent_name [snapshot_epoch|all]\n";
+}
 
 # Perform initial cleanup of existing mounts for this agent
 # This ensures we start with a clean slate
+write_log("Performing initial cleanup for agent: $agent_name");
 debug("Performing initial cleanup for agent: $agent_name");
 cleanup_mounts($mount_base, $agent_name, 0);
 
 # Create required mount directories
+write_log("Creating required mount directories");
 make_path($mount_base) unless -d $mount_base;
 make_path($zfs_block_base) unless -d $zfs_block_base;
 
@@ -300,18 +423,32 @@ my $snapshot_date = ($snapshot_epoch && $snapshot_epoch ne 'all') ?
     strftime("%Y-%m-%d_%H-%M-%S", localtime($snapshot_epoch)) : 
     "latest";
 
+write_log("Converted snapshot date: $snapshot_date");
 debug("Agent name: $agent_name");
 debug("Snapshot epoch: " . ($snapshot_epoch // "none") . " ($snapshot_date)");
 
 # Retrieve agent metadata using rtMetadata.pl
 # This provides information about available snapshots and volumes
+write_log("Retrieving agent metadata...");
 debug("Retrieving agent metadata...");
 my $metadata_script = "$script_dir/rtMetadata.pl";
-die "Cannot find rtMetadata.pl\n" unless -f $metadata_script;
+if (!-f $metadata_script) {
+    log_error("Cannot find rtMetadata.pl at $metadata_script");
+    die "Cannot find rtMetadata.pl\n";
+}
+write_log("Using metadata script: $metadata_script");
 
 # Execute metadata script and capture JSON output
+write_log("Executing metadata script");
 my $metadata_json = `perl "$metadata_script" -j`;
-die "Failed to get metadata\n" if $? != 0;
+my $metadata_exit_code = $? >> 8;
+write_log("Metadata script exit code: $metadata_exit_code");
+if ($metadata_exit_code != 0) {
+    log_error("Failed to get metadata (exit code: $metadata_exit_code)");
+    die "Failed to get metadata\n";
+}
+
+write_log("Metadata JSON length: " . length($metadata_json));
 
 # Parse metadata JSON response
 my $metadata;
@@ -319,10 +456,15 @@ eval {
     $metadata = decode_json($metadata_json);
 };
 if ($@) {
+    log_error("JSON decode error: $@");
+    log_error("Raw JSON: $metadata_json");
     debug("JSON decode error: $@");
     debug("Raw JSON: $metadata_json");
     die "Failed to parse metadata JSON: $@\n";
 }
+
+write_log("Metadata parsed successfully");
+write_log("Available agents: " . join(", ", keys %{$metadata->{agents}}));
 
 # Search for the agent in metadata using various identifiers
 # Agent can be found by hostname, name, or agent ID
