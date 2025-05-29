@@ -1,3 +1,23 @@
+<?php
+function getOpenRTVersion() {
+    $readmePath = '../openRTApp/README.md';
+    if (file_exists($readmePath)) {
+        $content = file_get_contents($readmePath);
+        if ($content !== false) {
+            // Get the last line that contains version info
+            $lines = explode("\n", $content);
+            foreach (array_reverse($lines) as $line) {
+                if (preg_match('/VER\s+(.+)/', trim($line), $matches)) {
+                    return trim($matches[1]);
+                }
+            }
+        }
+    }
+    return '1.0'; // Default fallback version
+}
+
+$openRTVersion = getOpenRTVersion();
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -255,7 +275,8 @@
             </div>
         </div>
         <div class="container">
-            <div class="d-flex justify-content-end align-items-center">
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="text-white">OpenRT v<?php echo $openRTVersion; ?></span>
                 <div class="form-check form-switch mb-0">
                     <input class="form-check-input" type="checkbox" id="automountToggle">
                     <label class="form-check-label text-white" for="automountToggle">Automount</label>
