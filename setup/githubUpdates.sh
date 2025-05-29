@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Target version for updates
+TARGET_VERSION="1.3"
+
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
     echo "This script must be run as root"
@@ -12,7 +15,7 @@ if [ "$1" = "remote" ]; then
     # Check current version from README.md
     if [ -f "/usr/local/openRT/openRTApp/README.md" ]; then
         CURRENT_VER=$(grep "^VER" "/usr/local/openRT/openRTApp/README.md" | awk '{print $2}')
-        if [ "$CURRENT_VER" != "1.2" ]; then
+        if [ "$CURRENT_VER" != "$TARGET_VERSION" ]; then
             echo "Updating openRTApp and web directory from GitHub..."
             
             # Backup current web directory if it exists
@@ -38,7 +41,7 @@ if [ "$1" = "remote" ]; then
                 echo "Syncing web directory..."
                 rsync -av --delete "$TEMP_DIR/openRT_repo/web/" "/usr/local/openRT/web/"
                 
-                echo "openRTApp and web directory updated to version 1.2"
+                echo "openRTApp and web directory updated to version $TARGET_VERSION"
             else
                 echo "Failed to clone repository"
                 exit 1
@@ -46,8 +49,13 @@ if [ "$1" = "remote" ]; then
             
             # Clean up temporary directory
             rm -rf "$TEMP_DIR"
+
+            # Make all Perl scripts executable in openRTApp directory
+            echo "Making Perl scripts executable..."
+            chmod +x /usr/local/openRT/openRTApp/*.pl
+
         else
-            echo "openRTApp is already at version 1.1"
+            echo "openRTApp is already at version $TARGET_VERSION"
         fi
     else
         echo "README.md not found, performing fresh install..."
@@ -69,7 +77,7 @@ if [ "$1" = "remote" ]; then
             echo "Installing web directory..."
             rsync -av "$TEMP_DIR/openRT_repo/web/" "/usr/local/openRT/web/"
             
-            echo "openRTApp and web directory installed at version 1.2"
+            echo "openRTApp and web directory installed at version $TARGET_VERSION"
         else
             echo "Failed to clone repository"
             exit 1
@@ -77,7 +85,13 @@ if [ "$1" = "remote" ]; then
         
         # Clean up temporary directory
         rm -rf "$TEMP_DIR"
+
+        # Make all Perl scripts executable in openRTApp directory
+        echo "Making Perl scripts executable..."
+        chmod +x /usr/local/openRT/openRTApp/*.pl
+        
     fi
+
     exit 0
 fi
 

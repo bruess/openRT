@@ -81,4 +81,4 @@ perl rtImport.pl export /dev/sdb        # Export pool on specific device
 - Root/sudo access required
 
 #Version Information
-VER 1.2
+VER 1.3
