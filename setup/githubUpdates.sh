@@ -38,7 +38,7 @@ if [ "$1" = "remote" ]; then
                 echo "Syncing web directory..."
                 rsync -av --delete "$TEMP_DIR/openRT_repo/web/" "/usr/local/openRT/web/"
                 
-                echo "openRTApp and web directory updated to version 1.1"
+                echo "openRTApp and web directory updated to version 1.2"
             else
                 echo "Failed to clone repository"
                 exit 1
@@ -69,7 +69,7 @@ if [ "$1" = "remote" ]; then
             echo "Installing web directory..."
             rsync -av "$TEMP_DIR/openRT_repo/web/" "/usr/local/openRT/web/"
             
-            echo "openRTApp and web directory installed at version 1.1"
+            echo "openRTApp and web directory installed at version 1.2"
         else
             echo "Failed to clone repository"
             exit 1
