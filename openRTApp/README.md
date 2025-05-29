@@ -79,3 +79,6 @@ perl rtImport.pl export /dev/sdb        # Export pool on specific device
 - Perl 5.10 or higher
 - ZFS utilities installed
 - Root/sudo access required
+
+#Version Information
+VER 1.1
